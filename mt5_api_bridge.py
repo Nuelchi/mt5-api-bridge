@@ -18,19 +18,25 @@ import os
 from supabase import create_client, Client
 
 # Try to import MT5 library
+MT5_INSTANCE = None
+MT5_AVAILABLE = False
+MT5_LIBRARY = None
+
 try:
-    import mt5linux as mt5
-    MT5_AVAILABLE = True
+    from mt5linux import MetaTrader5
     MT5_LIBRARY = "mt5linux"
+    MT5_AVAILABLE = True
+    logger.info("✅ mt5linux library found - will use RPC connection")
 except ImportError:
     try:
-        import MetaTrader5 as mt5
-        MT5_AVAILABLE = True
+        import MetaTrader5 as mt5_module
         MT5_LIBRARY = "MetaTrader5"
+        MT5_AVAILABLE = True
+        logger.info("✅ MetaTrader5 library found - will use direct connection")
     except ImportError:
-        mt5 = None
         MT5_AVAILABLE = False
         MT5_LIBRARY = None
+        logger.warning("⚠️  No MT5 library found")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -142,6 +148,8 @@ class TradeRequest(BaseModel):
 @app.on_event("startup")
 async def startup():
     """Initialize MT5 on startup"""
+    global MT5_INSTANCE
+    
     logger.info("🚀 Starting MT5 API Bridge")
     logger.info(f"📚 MT5 Library: {MT5_LIBRARY}")
     logger.info(f"🔐 Supabase: {'✅ Available' if SUPABASE_AVAILABLE else '❌ Not Available'}")
@@ -150,21 +158,87 @@ async def startup():
         logger.warning("⚠️  MT5 library not available - running in simulation mode")
         return
     
-    # Try to initialize (mt5linux doesn't need initialize, but MetaTrader5 does)
-    if hasattr(mt5, 'initialize'):
-        if not mt5.initialize():
-            logger.error(f"❌ MT5 initialization failed: {mt5.last_error()}")
-        else:
-            logger.info("✅ MT5 initialized successfully")
-    else:
-        logger.info("✅ MT5 library loaded (no initialization needed)")
-
+    # Initialize MT5 connection based on library type
+    try:
+        if MT5_LIBRARY == "mt5linux":
+            # mt5linux uses RPC - connect to running MT5 terminal
+            logger.info("🔌 Connecting to MT5 Terminal via RPC...")
+            logger.info("   Note: MT5 Terminal must be running with RPC server active")
+            
+            # Get RPC connection settings from environment
+            rpc_host = os.getenv("MT5_RPC_HOST", "localhost")
+            rpc_port = int(os.getenv("MT5_RPC_PORT", "18812"))
+            
+            try:
+                MT5_INSTANCE = MetaTrader5(host=rpc_host, port=rpc_port)
+                logger.info(f"✅ Connected to MT5 Terminal at {rpc_host}:{rpc_port}")
+                
+                # Test connection
+                try:
+                    account = MT5_INSTANCE.account_info()
+                    if account:
+                        logger.info(f"✅ MT5 connection verified - Account: {account.login}")
+                    else:
+                        logger.warning("⚠️  Connected but account_info() returned None")
+                except Exception as e:
+                    logger.warning(f"⚠️  Connection test failed: {e}")
+                    logger.info("   MT5 Terminal may not be logged in yet")
+                    
+            except ConnectionRefusedError:
+                logger.error("❌ Connection refused - MT5 Terminal not running or RPC server not active")
+                logger.info("   Start MT5 Terminal and ensure RPC server EA is running")
+                MT5_INSTANCE = None
+            except Exception as e:
+                logger.error(f"❌ Failed to connect to MT5: {e}")
+                MT5_INSTANCE = None
+                
+        elif MT5_LIBRARY == "MetaTrader5":
+            # Windows MetaTrader5 library - direct connection
+            logger.info("🔌 Initializing MT5 (Windows library)...")
+            if hasattr(mt5_module, 'initialize'):
+                if mt5_module.initialize():
+                    MT5_INSTANCE = mt5_module
+                    logger.info("✅ MT5 initialized successfully")
+                else:
+                    error = mt5_module.last_error()
+                    logger.error(f"❌ MT5 initialization failed: {error}")
+                    MT5_INSTANCE = None
+            else:
+                MT5_INSTANCE = mt5_module
+                logger.info("✅ MT5 library loaded")
+    except Exception as e:
+        logger.error(f"❌ MT5 initialization error: {e}")
+        MT5_INSTANCE = None
+    except Exception as e:
+        logger.error(f"❌ MT5 initialization error: {e}")
+        MT5_INSTANCE = None
+        return
+    
 @app.on_event("shutdown")
 async def shutdown():
     """Shutdown MT5"""
-    if MT5_AVAILABLE and hasattr(mt5, 'shutdown'):
-        mt5.shutdown()
+    global MT5_INSTANCE
+    if MT5_INSTANCE and hasattr(MT5_INSTANCE, 'shutdown'):
+        MT5_INSTANCE.shutdown()
         logger.info("MT5 shut down")
+    MT5_INSTANCE = None
+
+# Helper function to get MT5 instance or raise error
+def get_mt5():
+    """Get MT5 instance, raise error if not available"""
+    if not MT5_AVAILABLE or MT5_INSTANCE is None:
+        raise HTTPException(status_code=503, detail="MT5 not connected. Ensure MT5 Terminal is running with RPC server active.")
+    return MT5_INSTANCE
+
+# Helper to get MT5 constants (for timeframe, order types, etc.)
+def get_mt5_const(name):
+    """Get MT5 constant by name"""
+    if MT5_LIBRARY == "mt5linux":
+        # Constants are on the class
+        return getattr(MetaTrader5, name, None)
+    elif MT5_LIBRARY == "MetaTrader5":
+        return getattr(mt5_module, name, None)
+    return None
 
 # ============ HEALTH & INFO ============
 
@@ -187,9 +261,16 @@ async def health_check():
         mt5_connected = False
         account_info = None
         
-        if MT5_AVAILABLE:
-            account_info = mt5.account_info()
-            mt5_connected = account_info is not None
+        if MT5_AVAILABLE and MT5_INSTANCE:
+            try:
+                account_info = MT5_INSTANCE.account_info()
+                mt5_connected = account_info is not None
+            except:
+                mt5_connected = False
+                account_info = None
+        else:
+            mt5_connected = False
+            account_info = None
         
         return {
             "status": "healthy" if mt5_connected else "degraded",
@@ -214,25 +295,41 @@ async def connect_account(
     request: ConnectRequest,
     user: dict = Depends(verify_token)
 ):
-    """Connect to MT5 account"""
-    if not MT5_AVAILABLE:
-        raise HTTPException(status_code=503, detail="MT5 not available")
+    """Connect to MT5 account
+    
+    Note: For mt5linux, MT5 Terminal must already be logged in.
+    This endpoint verifies the connection and returns account info.
+    """
+    mt5 = get_mt5()
     
     try:
-        authorized = mt5.login(
-            request.login,
-            password=request.password,
-            server=request.server
-        )
+        # For mt5linux, login is done in MT5 Terminal, not via API
+        # Just verify connection and get account info
+        account_info = mt5.account_info()
         
-        if not authorized:
-            error = mt5.last_error()
+        if account_info is None:
             raise HTTPException(
                 status_code=400,
-                detail=f"Login failed: {error}"
+                detail="Not connected to MT5. Please log in to MT5 Terminal first."
             )
         
-        account_info = mt5.account_info()
+        # Verify login matches (if mt5linux supports login method)
+        if hasattr(mt5, 'login'):
+            # Windows MetaTrader5 library - can login programmatically
+            authorized = mt5.login(
+                request.login,
+                password=request.password,
+                server=request.server
+            )
+            
+            if not authorized:
+                error = mt5.last_error() if hasattr(mt5, 'last_error') else "Login failed"
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Login failed: {error}"
+                )
+            account_info = mt5.account_info()
+        
         return {
             "success": True,
             "account": {
@@ -254,8 +351,7 @@ async def connect_account(
 @app.get("/api/v1/account/info")
 async def get_account_info(user: dict = Depends(verify_token)):
     """Get account information"""
-    if not MT5_AVAILABLE:
-        raise HTTPException(status_code=503, detail="MT5 not available")
+    mt5 = get_mt5()
     
     try:
         account_info = mt5.account_info()
@@ -291,17 +387,20 @@ async def get_historical_data(
     user: dict = Depends(verify_token)
 ):
     """Get historical market data"""
-    if not MT5_AVAILABLE:
-        raise HTTPException(status_code=503, detail="MT5 not available")
+    mt5 = get_mt5()
     
     try:
-        # Map timeframe
+        # Map timeframe - get constants from MT5
         timeframe_map = {
-            "M1": mt5.TIMEFRAME_M1, "M5": mt5.TIMEFRAME_M5,
-            "M15": mt5.TIMEFRAME_M15, "M30": mt5.TIMEFRAME_M30,
-            "H1": mt5.TIMEFRAME_H1, "H4": mt5.TIMEFRAME_H4,
-            "D1": mt5.TIMEFRAME_D1, "W1": mt5.TIMEFRAME_W1,
-            "MN1": mt5.TIMEFRAME_MN1
+            "M1": get_mt5_const("TIMEFRAME_M1"),
+            "M5": get_mt5_const("TIMEFRAME_M5"),
+            "M15": get_mt5_const("TIMEFRAME_M15"),
+            "M30": get_mt5_const("TIMEFRAME_M30"),
+            "H1": get_mt5_const("TIMEFRAME_H1"),
+            "H4": get_mt5_const("TIMEFRAME_H4"),
+            "D1": get_mt5_const("TIMEFRAME_D1"),
+            "W1": get_mt5_const("TIMEFRAME_W1"),
+            "MN1": get_mt5_const("TIMEFRAME_MN1")
         }
         
         mt5_timeframe = timeframe_map.get(timeframe.upper())
@@ -345,16 +444,19 @@ async def get_data_range(
     user: dict = Depends(verify_token)
 ):
     """Get historical data for date range"""
-    if not MT5_AVAILABLE:
-        raise HTTPException(status_code=503, detail="MT5 not available")
+    mt5 = get_mt5()
     
     try:
         timeframe_map = {
-            "M1": mt5.TIMEFRAME_M1, "M5": mt5.TIMEFRAME_M5,
-            "M15": mt5.TIMEFRAME_M15, "M30": mt5.TIMEFRAME_M30,
-            "H1": mt5.TIMEFRAME_H1, "H4": mt5.TIMEFRAME_H4,
-            "D1": mt5.TIMEFRAME_D1, "W1": mt5.TIMEFRAME_W1,
-            "MN1": mt5.TIMEFRAME_MN1
+            "M1": get_mt5_const("TIMEFRAME_M1"),
+            "M5": get_mt5_const("TIMEFRAME_M5"),
+            "M15": get_mt5_const("TIMEFRAME_M15"),
+            "M30": get_mt5_const("TIMEFRAME_M30"),
+            "H1": get_mt5_const("TIMEFRAME_H1"),
+            "H4": get_mt5_const("TIMEFRAME_H4"),
+            "D1": get_mt5_const("TIMEFRAME_D1"),
+            "W1": get_mt5_const("TIMEFRAME_W1"),
+            "MN1": get_mt5_const("TIMEFRAME_MN1")
         }
         
         mt5_timeframe = timeframe_map.get(timeframe.upper())
@@ -409,8 +511,7 @@ async def place_order(
     user: dict = Depends(verify_token)
 ):
     """Place a market order"""
-    if not MT5_AVAILABLE:
-        raise HTTPException(status_code=503, detail="MT5 not available")
+    mt5 = get_mt5()
     
     try:
         # Get symbol info
@@ -420,17 +521,17 @@ async def place_order(
         
         # Determine order type
         if request.order_type.upper() == "BUY":
-            order_type_mt5 = mt5.ORDER_TYPE_BUY
+            order_type_mt5 = get_mt5_const("ORDER_TYPE_BUY")
             price_exec = symbol_info.ask if request.price is None else request.price
         elif request.order_type.upper() == "SELL":
-            order_type_mt5 = mt5.ORDER_TYPE_SELL
+            order_type_mt5 = get_mt5_const("ORDER_TYPE_SELL")
             price_exec = symbol_info.bid if request.price is None else request.price
         else:
             raise HTTPException(status_code=400, detail="Invalid order_type")
         
         # Prepare request
         trade_request = {
-            "action": mt5.TRADE_ACTION_DEAL,
+            "action": get_mt5_const("TRADE_ACTION_DEAL"),
             "symbol": request.symbol,
             "volume": request.volume,
             "type": order_type_mt5,
@@ -440,14 +541,14 @@ async def place_order(
             "deviation": 10,
             "magic": 123456,
             "comment": "API Trade",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_time": get_mt5_const("ORDER_TIME_GTC"),
+            "type_filling": get_mt5_const("ORDER_FILLING_IOC"),
         }
         
         # Send order
         result = mt5.order_send(trade_request)
         
-        if result.retcode != mt5.TRADE_RETCODE_DONE:
+        if result.retcode != get_mt5_const("TRADE_RETCODE_DONE"):
             raise HTTPException(
                 status_code=400,
                 detail=f"Order failed: {result.comment} (code: {result.retcode})"
@@ -470,8 +571,7 @@ async def place_order(
 @app.get("/api/v1/positions")
 async def get_positions(user: dict = Depends(verify_token)):
     """Get all open positions"""
-    if not MT5_AVAILABLE:
-        raise HTTPException(status_code=503, detail="MT5 not available")
+    mt5 = get_mt5()
     
     try:
         positions = mt5.positions_get()
@@ -479,10 +579,11 @@ async def get_positions(user: dict = Depends(verify_token)):
         if positions is None:
             return {"positions": []}
         
+        ORDER_TYPE_BUY = get_mt5_const("ORDER_TYPE_BUY")
         result = [{
             "ticket": pos.ticket,
             "symbol": pos.symbol,
-            "type": "buy" if pos.type == mt5.ORDER_TYPE_BUY else "sell",
+            "type": "buy" if pos.type == ORDER_TYPE_BUY else "sell",
             "volume": float(pos.volume),
             "price_open": float(pos.price_open),
             "price_current": float(pos.price_current),
@@ -500,8 +601,7 @@ async def get_positions(user: dict = Depends(verify_token)):
 @app.delete("/api/v1/positions/{ticket}")
 async def close_position(ticket: int, user: dict = Depends(verify_token)):
     """Close a position"""
-    if not MT5_AVAILABLE:
-        raise HTTPException(status_code=503, detail="MT5 not available")
+    mt5 = get_mt5()
     
     try:
         position = mt5.positions_get(ticket=ticket)
@@ -509,16 +609,18 @@ async def close_position(ticket: int, user: dict = Depends(verify_token)):
             raise HTTPException(status_code=404, detail="Position not found")
         
         pos = position[0]
-        close_type = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
+        ORDER_TYPE_BUY = get_mt5_const("ORDER_TYPE_BUY")
+        ORDER_TYPE_SELL = get_mt5_const("ORDER_TYPE_SELL")
+        close_type = ORDER_TYPE_SELL if pos.type == ORDER_TYPE_BUY else ORDER_TYPE_BUY
         
         symbol_info = mt5.symbol_info(pos.symbol)
         if symbol_info is None:
             raise HTTPException(status_code=404, detail="Symbol info not available")
         
-        close_price = symbol_info.bid if close_type == mt5.ORDER_TYPE_SELL else symbol_info.ask
+        close_price = symbol_info.bid if close_type == ORDER_TYPE_SELL else symbol_info.ask
         
         request = {
-            "action": mt5.TRADE_ACTION_DEAL,
+            "action": get_mt5_const("TRADE_ACTION_DEAL"),
             "symbol": pos.symbol,
             "volume": pos.volume,
             "type": close_type,
@@ -527,13 +629,13 @@ async def close_position(ticket: int, user: dict = Depends(verify_token)):
             "deviation": 10,
             "magic": pos.magic,
             "comment": "Close Position",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_time": get_mt5_const("ORDER_TIME_GTC"),
+            "type_filling": get_mt5_const("ORDER_FILLING_IOC"),
         }
         
         result = mt5.order_send(request)
         
-        if result.retcode != mt5.TRADE_RETCODE_DONE:
+        if result.retcode != get_mt5_const("TRADE_RETCODE_DONE"):
             raise HTTPException(status_code=400, detail=f"Close failed: {result.comment}")
         
         return {
@@ -553,8 +655,7 @@ async def close_position(ticket: int, user: dict = Depends(verify_token)):
 @app.get("/api/v1/symbols")
 async def get_symbols(user: dict = Depends(verify_token)):
     """Get all available symbols"""
-    if not MT5_AVAILABLE:
-        raise HTTPException(status_code=503, detail="MT5 not available")
+    mt5 = get_mt5()
     
     try:
         symbols = mt5.symbols_get()

@@ -21,22 +21,21 @@ from supabase import create_client, Client
 MT5_INSTANCE = None
 MT5_AVAILABLE = False
 MT5_LIBRARY = None
+MetaTrader5 = None
+mt5_module = None
 
 try:
     from mt5linux import MetaTrader5
     MT5_LIBRARY = "mt5linux"
     MT5_AVAILABLE = True
-    logger.info("✅ mt5linux library found - will use RPC connection")
 except ImportError:
     try:
         import MetaTrader5 as mt5_module
         MT5_LIBRARY = "MetaTrader5"
         MT5_AVAILABLE = True
-        logger.info("✅ MetaTrader5 library found - will use direct connection")
     except ImportError:
         MT5_AVAILABLE = False
         MT5_LIBRARY = None
-        logger.warning("⚠️  No MT5 library found")
 
 logging.basicConfig(
     level=logging.INFO,

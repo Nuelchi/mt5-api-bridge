@@ -28,14 +28,53 @@ command -v python3 >/dev/null 2>&1 || { echo "❌ Python3 not installed"; exit 1
 export WINEPREFIX
 export WINEDEBUG
 
+# Initialize Wine first (critical step)
+echo ""
+echo "[0/7] Initializing Wine..."
+if [ ! -d "$WINEPREFIX" ]; then
+    echo "   Creating Wine prefix..."
+    mkdir -p "$WINEPREFIX"
+    
+    # Set up virtual display for headless operation
+    export DISPLAY=:99
+    if ! pgrep -x Xvfb > /dev/null; then
+        echo "   Starting virtual display (Xvfb)..."
+        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+        sleep 2
+    fi
+    
+    # Initialize Wine
+    echo "   Running winecfg to initialize Wine..."
+    WINEDLLOVERRIDES="mscoree,mshtml=" winecfg -v win10 >/dev/null 2>&1 || {
+        echo "   Wine initialization (this may take a moment)..."
+        sleep 3
+    }
+    echo "✅ Wine initialized"
+else
+    echo "✅ Wine prefix already exists"
+    # Ensure virtual display is running
+    export DISPLAY=:99
+    if ! pgrep -x Xvfb > /dev/null; then
+        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+        sleep 2
+    fi
+fi
+
 # Step 1: Install Mono for Wine
 echo ""
 echo "[1/7] Installing Mono for Wine..."
 if [ ! -e "$WINEPREFIX/drive_c/windows/mono" ]; then
+    echo "   Downloading Mono..."
     curl -o /tmp/mono.msi "$MONO_URL"
-    WINEDLLOVERRIDES=mscoree=d wine msiexec /i /tmp/mono.msi /qn
+    echo "   Installing Mono (this may take a few minutes)..."
+    WINEDLLOVERRIDES=mscoree=d DISPLAY=:99 wine msiexec /i /tmp/mono.msi /qn >/dev/null 2>&1
+    sleep 5
     rm /tmp/mono.msi
-    echo "✅ Mono installed"
+    if [ -e "$WINEPREFIX/drive_c/windows/mono" ]; then
+        echo "✅ Mono installed"
+    else
+        echo "⚠️  Mono installation may have failed, continuing anyway..."
+    fi
 else
     echo "✅ Mono already installed"
 fi
@@ -49,19 +88,17 @@ if [ -e "$MT5FILE" ]; then
     echo "✅ MT5 Terminal already installed"
 else
     echo "📥 Downloading MT5 installer..."
-    wine reg add "HKEY_CURRENT_USER\\Software\\Wine" /v Version /t REG_SZ /d "win10" /f >/dev/null 2>&1
+    DISPLAY=:99 wine reg add "HKEY_CURRENT_USER\\Software\\Wine" /v Version /t REG_SZ /d "win10" /f >/dev/null 2>&1 || true
     curl -o /tmp/mt5setup.exe "$MT5SETUP_URL"
     
     echo "📦 Installing MT5 (this may take a few minutes)..."
-    # Use virtual display for headless
-    export DISPLAY=:99
-    if ! pgrep -x Xvfb > /dev/null; then
-        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
-        sleep 2
-    fi
-    
-    wine /tmp/mt5setup.exe /auto >/dev/null 2>&1 || wine /tmp/mt5setup.exe >/dev/null 2>&1
-    sleep 30  # Wait for installation
+    DISPLAY=:99 WINEDLLOVERRIDES="mscoree,mshtml=" wine /tmp/mt5setup.exe /auto >/dev/null 2>&1 || {
+        echo "   Silent install failed, trying interactive..."
+        DISPLAY=:99 WINEDLLOVERRIDES="mscoree,mshtml=" wine /tmp/mt5setup.exe >/dev/null 2>&1 &
+        INSTALL_PID=$!
+        sleep 60  # Wait for installation
+    }
+    sleep 10
     rm -f /tmp/mt5setup.exe
     
     if [ -e "$MT5FILE" ]; then
@@ -74,33 +111,35 @@ fi
 # Step 3: Install Windows Python in Wine
 echo ""
 echo "[3/7] Installing Windows Python in Wine..."
-if ! wine python --version >/dev/null 2>&1; then
+if ! DISPLAY=:99 wine python --version >/dev/null 2>&1; then
     echo "📥 Downloading Windows Python ${PYTHON_VERSION}..."
     curl -L "$PYTHON_URL" -o /tmp/python-installer.exe
     
-    echo "📦 Installing Python in Wine..."
-    wine /tmp/python-installer.exe /quiet InstallAllUsers=1 PrependPath=1 >/dev/null 2>&1
-    sleep 10
+    echo "📦 Installing Python in Wine (this may take a few minutes)..."
+    DISPLAY=:99 WINEDLLOVERRIDES="mscoree,mshtml=" wine /tmp/python-installer.exe /quiet InstallAllUsers=1 PrependPath=1 >/dev/null 2>&1
+    sleep 15
     rm /tmp/python-installer.exe
     
-    if wine python --version >/dev/null 2>&1; then
-        echo "✅ Windows Python installed"
+    if DISPLAY=:99 wine python --version >/dev/null 2>&1; then
+        echo "✅ Windows Python installed: $(DISPLAY=:99 wine python --version 2>&1)"
     else
         echo "❌ Failed to install Windows Python"
+        echo "   Trying to find Python installation..."
+        find "$WINEPREFIX" -name "python.exe" 2>/dev/null | head -1 || echo "   Python not found"
         exit 1
     fi
 else
-    echo "✅ Windows Python already installed: $(wine python --version 2>&1)"
+    echo "✅ Windows Python already installed: $(DISPLAY=:99 wine python --version 2>&1)"
 fi
 
 # Step 4: Install Windows MetaTrader5 library
 echo ""
 echo "[4/7] Installing Windows MetaTrader5 library..."
-wine python -m pip install --upgrade pip >/dev/null 2>&1
+DISPLAY=:99 wine python -m pip install --upgrade pip >/dev/null 2>&1
 
-if ! wine python -c "import MetaTrader5" >/dev/null 2>&1; then
+if ! DISPLAY=:99 wine python -c "import MetaTrader5" >/dev/null 2>&1; then
     echo "📦 Installing MetaTrader5==${METATRADER_VERSION} in Windows Python..."
-    wine python -m pip install --no-cache-dir "MetaTrader5==${METATRADER_VERSION}" >/dev/null 2>&1
+    DISPLAY=:99 wine python -m pip install --no-cache-dir "MetaTrader5==${METATRADER_VERSION}" >/dev/null 2>&1
     echo "✅ MetaTrader5 library installed"
 else
     echo "✅ MetaTrader5 library already installed"
@@ -109,8 +148,8 @@ fi
 # Step 5: Install mt5linux in Windows Python
 echo ""
 echo "[5/7] Installing mt5linux in Windows Python..."
-if ! wine python -c "import mt5linux" >/dev/null 2>&1; then
-    wine python -m pip install --no-cache-dir "mt5linux>=0.1.9" >/dev/null 2>&1
+if ! DISPLAY=:99 wine python -c "import mt5linux" >/dev/null 2>&1; then
+    DISPLAY=:99 wine python -m pip install --no-cache-dir "mt5linux>=0.1.9" >/dev/null 2>&1
     echo "✅ mt5linux installed in Windows Python"
 else
     echo "✅ mt5linux already installed in Windows Python"
@@ -145,7 +184,7 @@ WorkingDirectory=/opt/mt5-api-bridge
 Environment="PATH=/opt/mt5-api-bridge/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="WINEPREFIX=$HOME/.wine"
 Environment="DISPLAY=:99"
-ExecStart=/opt/mt5-api-bridge/venv/bin/python3 -m mt5linux --host 0.0.0.0 -p $MT5SERVER_PORT -w wine python.exe
+ExecStart=/opt/mt5-api-bridge/venv/bin/python3 -m mt5linux --host 0.0.0.0 -p $MT5SERVER_PORT -w "DISPLAY=:99 wine" python.exe
 Restart=always
 RestartSec=10
 StandardOutput=journal

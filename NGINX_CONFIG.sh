@@ -74,6 +74,6 @@ echo ""
 echo "✅ Nginx configured successfully!"
 echo ""
 echo "🔗 Next: Set up SSL with Let's Encrypt"
-echo "   Run: certbot --nginx -d ${DOMAIN}"
+echo "   Run: certbot --nginx -d ${DOMAIN} --email 55emmachi@gmail.com --agree-tos --non-interactive"
 echo ""
 

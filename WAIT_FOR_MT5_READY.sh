@@ -21,21 +21,27 @@ WAITED=0
 TERMINAL_READY=false
 
 while [ $WAITED -lt $MAX_WAIT ]; do
-    python3 <<PYEOF
+    echo "   Checking... (${WAITED}s / ${MAX_WAIT}s)"
+    
+    # Use timeout to prevent hanging
+    timeout 10 python3 <<PYEOF
 from mt5linux import MetaTrader5
 import sys
 
 try:
     mt5 = MetaTrader5(host='localhost', port=8001)
     terminal_info = mt5.terminal_info()
-    if terminal_info and terminal_info.build:
+    if terminal_info and hasattr(terminal_info, 'build') and terminal_info.build:
         print(f"   ✅ Terminal ready! Build: {terminal_info.build}")
         sys.exit(0)
     else:
-        print(f"   ⏳ Waiting... ({sys.argv[1] if len(sys.argv) > 1 else 0}s)")
+        print("   ⏳ Terminal not ready yet (terminal_info returned None or no build)")
         sys.exit(1)
+except TimeoutError as e:
+    print(f"   ⏳ Timeout: {e}")
+    sys.exit(1)
 except Exception as e:
-    print(f"   ⏳ Waiting... ({sys.argv[1] if len(sys.argv) > 1 else 0}s) - {str(e)[:50]}")
+    print(f"   ⏳ Error: {str(e)[:80]}")
     sys.exit(1)
 PYEOF
 
@@ -47,7 +53,6 @@ PYEOF
     fi
     
     WAITED=$((WAITED + 5))
-    echo "   (Waited $WAITED seconds so far...)"
     sleep 5
 done
 
@@ -56,9 +61,13 @@ echo ""
 if [ "$TERMINAL_READY" = false ]; then
     echo "⚠️  MT5 Terminal did not become ready after $MAX_WAIT seconds"
     echo ""
-    echo "💡 Trying to restart MT5 Terminal..."
+    echo "💡 The issue might be that MT5 Terminal needs to be restarted"
+    echo "   or the RPyC connection isn't working properly."
+    echo ""
+    echo "   Let's try restarting MT5 Terminal..."
     
     # Kill existing process
+    echo "   Stopping existing MT5 Terminal..."
     pkill -f "terminal64.exe" || true
     sleep 5
     
@@ -72,17 +81,20 @@ if [ "$TERMINAL_READY" = false ]; then
         DISPLAY=:99 WINEDLLOVERRIDES="mscoree,mshtml=" wine "$MT5_EXE" >/dev/null 2>&1 &
         sleep 20
         
-        # Wait again
+        echo "   Waiting for MT5 Terminal to initialize after restart..."
+        # Wait again with timeout
         WAITED=0
         while [ $WAITED -lt 60 ]; do
-            python3 <<PYEOF
+            echo "   Checking... (${WAITED}s / 60s)"
+            
+            timeout 10 python3 <<PYEOF
 from mt5linux import MetaTrader5
 import sys
 
 try:
     mt5 = MetaTrader5(host='localhost', port=8001)
     terminal_info = mt5.terminal_info()
-    if terminal_info and terminal_info.build:
+    if terminal_info and hasattr(terminal_info, 'build') and terminal_info.build:
         print(f"   ✅ Terminal ready after restart! Build: {terminal_info.build}")
         sys.exit(0)
     else:
@@ -99,17 +111,26 @@ PYEOF
             WAITED=$((WAITED + 5))
             sleep 5
         done
+    else
+        echo "   ❌ MT5 Terminal executable not found: $MT5_EXE"
     fi
 fi
 
 if [ "$TERMINAL_READY" = false ]; then
+    echo ""
     echo "❌ Failed to get MT5 Terminal ready"
     echo ""
-    echo "💡 Troubleshooting:"
+    echo "💡 Troubleshooting steps:"
     echo "   1. Check MT5 Terminal process: ps aux | grep terminal64"
     echo "   2. Check RPyC server: systemctl status mt5-rpyc"
     echo "   3. Check RPyC logs: journalctl -u mt5-rpyc -n 50"
     echo "   4. Try restarting RPyC: systemctl restart mt5-rpyc"
+    echo ""
+    echo "   The RPyC server might not be able to connect to MT5 Terminal."
+    echo "   This could mean:"
+    echo "   - MT5 Terminal is not fully loaded"
+    echo "   - Windows Python in Wine is not working correctly"
+    echo "   - The RPyC server needs to be restarted"
     exit 1
 fi
 
@@ -118,7 +139,7 @@ echo ""
 # Step 2: Check login status
 echo "[2/3] Checking login status..."
 echo "=============================="
-python3 <<PYEOF
+timeout 15 python3 <<PYEOF
 from mt5linux import MetaTrader5
 import sys
 
@@ -135,7 +156,7 @@ try:
         print("   ⚠️  Not logged in")
         sys.exit(1)
 except Exception as e:
-    print(f"   ⚠️  Not logged in: {e}")
+    print(f"   ⚠️  Not logged in: {str(e)[:80]}")
     sys.exit(1)
 PYEOF
 
@@ -150,7 +171,7 @@ if [ $LOGIN_OK -ne 0 ]; then
     echo "   Login: 5042856355"
     echo ""
     
-    MAX_ATTEMPTS=15
+    MAX_ATTEMPTS=10
     ATTEMPT=0
     SUCCESS=false
     
@@ -158,7 +179,7 @@ if [ $LOGIN_OK -ne 0 ]; then
         ATTEMPT=$((ATTEMPT + 1))
         echo "   Attempt $ATTEMPT/$MAX_ATTEMPTS..."
         
-        python3 <<PYEOF
+        timeout 30 python3 <<PYEOF
 from mt5linux import MetaTrader5
 import sys
 import time
@@ -174,7 +195,7 @@ try:
     else:
         print("   ✅ Initialized")
     
-    time.sleep(3)
+    time.sleep(2)
     
     # Login
     print("   Logging in...")
@@ -190,11 +211,8 @@ try:
             print(f"      Account: {account.login}")
             print(f"      Server: {account.server}")
             print(f"      Balance: {account.balance}")
-            print(f"      Equity: {account.equity}")
             sys.exit(0)
         else:
-            # Try again after more time
-            print("   ⏳ Waiting longer for account info...")
             time.sleep(10)
             account = mt5.account_info()
             if account:
@@ -202,20 +220,18 @@ try:
                 print(f"      Account: {account.login}")
                 sys.exit(0)
             else:
-                print("   ⏳ Still waiting...")
-                sys.exit(2)  # Retry
+                print("   ⏳ Still waiting for account info...")
+                sys.exit(2)
     else:
         error = mt5.last_error()
         print(f"   ⚠️  Login failed: {error}")
-        sys.exit(2)  # Retry
+        sys.exit(2)
         
 except TimeoutError:
     print("   ⏳ Timeout - retrying...")
     sys.exit(2)
 except Exception as e:
-    print(f"   ⏳ Error: {e}")
-    import traceback
-    traceback.print_exc()
+    print(f"   ⏳ Error: {str(e)[:80]}")
     sys.exit(2)
 PYEOF
 
@@ -236,11 +252,6 @@ PYEOF
         echo "✅ Login successful!"
     else
         echo "❌ Failed to login after $MAX_ATTEMPTS attempts"
-        echo ""
-        echo "💡 The MT5 Terminal might need manual intervention:"
-        echo "   1. Check if MT5 Terminal GUI is accessible (may need VNC)"
-        echo "   2. Try restarting MT5 Terminal: pkill -f terminal64.exe && sleep 5 && wine 'C:\\Program Files\\MetaTrader 5\\terminal64.exe'"
-        echo "   3. Check RPyC server logs: journalctl -u mt5-rpyc -n 50"
         exit 1
     fi
 else
@@ -251,7 +262,7 @@ echo ""
 echo "✅ MT5 is ready and logged in!"
 echo ""
 echo "📋 Final Status:"
-python3 <<PYEOF
+timeout 15 python3 <<PYEOF
 from mt5linux import MetaTrader5
 
 try:
@@ -262,8 +273,6 @@ try:
         print(f"   ✅ Server: {account.server}")
         print(f"   ✅ Balance: {account.balance}")
         print(f"   ✅ Equity: {account.equity}")
-        print(f"   ✅ Margin: {account.margin}")
-        print(f"   ✅ Free Margin: {account.margin_free}")
 except Exception as e:
     print(f"   ⚠️  Error: {e}")
 PYEOF
@@ -271,4 +280,3 @@ PYEOF
 echo ""
 echo "🚀 Next: Run ./TEST_AND_SETUP.sh to complete setup"
 echo ""
-

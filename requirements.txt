@@ -1,0 +1,14 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+supabase==2.0.0
+python-dotenv==1.0.0
+httpx==0.25.0
+pydantic==2.5.0
+
+# MT5 Library (install one based on your system)
+# For Linux VPS:
+mt5linux>=1.0.0
+
+# OR for Windows (if testing locally):
+# MetaTrader5>=5.0.45
+

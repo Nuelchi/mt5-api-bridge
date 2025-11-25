@@ -219,7 +219,7 @@ async def startup():
             
             # Get RPC connection settings from environment
             rpc_host = os.getenv("MT5_RPC_HOST", "localhost")
-            rpc_port = int(os.getenv("MT5_RPC_PORT", "18812"))
+            rpc_port = int(os.getenv("MT5_RPC_PORT", "8001"))  # Docker uses 8001
             
             try:
                 MT5_INSTANCE = MetaTrader5(host=rpc_host, port=rpc_port)

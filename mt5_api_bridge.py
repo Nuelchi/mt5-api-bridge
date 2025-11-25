@@ -724,23 +724,24 @@ async def close_position(ticket: int, user: dict = Depends(verify_token)):
         
         # Get symbol info to determine filling mode
         symbol_info = mt5.symbol_info(pos.symbol)
+        ORDER_FILLING_FOK = get_mt5_const("ORDER_FILLING_FOK")
+        ORDER_FILLING_IOC = get_mt5_const("ORDER_FILLING_IOC")
+        ORDER_FILLING_RETURN = get_mt5_const("ORDER_FILLING_RETURN")
+        TRADE_RETCODE_DONE = get_mt5_const("TRADE_RETCODE_DONE")
+        
         filling_mode = None
-        if symbol_info:
+        if symbol_info and hasattr(symbol_info, 'filling_mode'):
             filling_modes = symbol_info.filling_mode
-            ORDER_FILLING_FOK = get_mt5_const("ORDER_FILLING_FOK")
-            ORDER_FILLING_IOC = get_mt5_const("ORDER_FILLING_IOC")
-            ORDER_FILLING_RETURN = get_mt5_const("ORDER_FILLING_RETURN")
-            
-            if filling_modes & ORDER_FILLING_FOK:
-                filling_mode = ORDER_FILLING_FOK
-            elif filling_modes & ORDER_FILLING_IOC:
+            if ORDER_FILLING_IOC is not None and (filling_modes & ORDER_FILLING_IOC):
                 filling_mode = ORDER_FILLING_IOC
-            elif filling_modes & ORDER_FILLING_RETURN:
+            elif ORDER_FILLING_FOK is not None and (filling_modes & ORDER_FILLING_FOK):
+                filling_mode = ORDER_FILLING_FOK
+            elif ORDER_FILLING_RETURN is not None and (filling_modes & ORDER_FILLING_RETURN):
                 filling_mode = ORDER_FILLING_RETURN
-            else:
-                filling_mode = ORDER_FILLING_RETURN
-        else:
-            filling_mode = get_mt5_const("ORDER_FILLING_RETURN")
+        
+        # Default to IOC if couldn't determine
+        if filling_mode is None:
+            filling_mode = ORDER_FILLING_IOC if ORDER_FILLING_IOC is not None else ORDER_FILLING_RETURN
         
         request = {
             "action": get_mt5_const("TRADE_ACTION_DEAL"),
@@ -756,10 +757,16 @@ async def close_position(ticket: int, user: dict = Depends(verify_token)):
             "type_filling": filling_mode,
         }
         
+        logger.info(f"Closing position {pos.ticket}: symbol={pos.symbol}, filling_mode={filling_mode}")
         result = mt5.order_send(request)
         
-        if result.retcode != get_mt5_const("TRADE_RETCODE_DONE"):
-            raise HTTPException(status_code=400, detail=f"Close failed: {result.comment}")
+        if result is None:
+            error_msg = mt5.last_error() if hasattr(mt5, 'last_error') else "Order send returned None"
+            raise HTTPException(status_code=500, detail=f"Close failed: {error_msg}")
+        
+        if result.retcode != TRADE_RETCODE_DONE:
+            error_msg = result.comment if hasattr(result, 'comment') else f"Error code: {result.retcode}"
+            raise HTTPException(status_code=400, detail=f"Close failed: {error_msg} (code: {result.retcode})")
         
         return {
             "success": True,

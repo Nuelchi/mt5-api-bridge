@@ -623,13 +623,21 @@ async def place_order(
         except Exception as e:
             logger.warning(f"Error reading filling_mode: {e}")
         
-        # If we couldn't determine, try without type_filling first, then IOC
+        # Try detected filling mode first, then fallbacks
+        # Always try multiple modes in case the detected one doesn't work
         filling_modes_to_try = []
         if filling_mode is not None:
-            filling_modes_to_try = [filling_mode]
-        else:
-            # Try without type_filling first (some brokers handle it automatically)
-            filling_modes_to_try = [None, ORDER_FILLING_IOC, ORDER_FILLING_FOK, ORDER_FILLING_RETURN]
+            # Start with detected mode
+            filling_modes_to_try.append(filling_mode)
+        
+        # Always try without type_filling (some brokers handle it automatically)
+        if None not in filling_modes_to_try:
+            filling_modes_to_try.append(None)
+        
+        # Try other standard modes as fallbacks
+        for mode in [ORDER_FILLING_RETURN, ORDER_FILLING_IOC, ORDER_FILLING_FOK]:
+            if mode not in filling_modes_to_try:
+                filling_modes_to_try.append(mode)
         
         # Try each filling mode until one works
         result = None

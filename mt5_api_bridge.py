@@ -5,7 +5,7 @@ Web API for MT5 trading and data access on Linux VPS
 Uses Supabase JWT authentication (same as Trainflow backend)
 """
 
-from fastapi import FastAPI, Depends, HTTPException, Query, status
+from fastapi import FastAPI, Depends, HTTPException, Query, status, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -18,6 +18,9 @@ import time
 
 # Supabase authentication (same as backend)
 from supabase import create_client, Client
+
+# MQL Compiler
+from mql_compiler import compiler as mql_compiler
 
 # Try to import MT5 library
 MT5_INSTANCE = None
@@ -905,6 +908,155 @@ async def get_symbols(user: dict = Depends(verify_token)):
     except Exception as e:
         logger.error(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ============ ALGORITHMS & COMPILATION ============
+
+class CompileRequest(BaseModel):
+    """Request to compile MQL5/MQL4 code"""
+    code: str
+    filename: str
+    validate_only: bool = False
+
+class DeployRequest(BaseModel):
+    """Request to deploy compiled EA"""
+    code: str
+    filename: str
+    ea_name: Optional[str] = None
+
+@app.post("/api/v1/algorithms/compile")
+async def compile_algorithm(request: CompileRequest, user: dict = Depends(verify_token)):
+    """
+    Compile MQL5/MQL4 code
+    
+    Args:
+        code: MQL5 source code
+        filename: Filename (e.g., "MyEA.mq5")
+        validate_only: If true, only validate syntax
+    
+    Returns:
+        Compilation results including errors/warnings
+    """
+    try:
+        user_id = user.get("sub", "unknown")
+        
+        success, result = mql_compiler.compile_mql(
+            code=request.code,
+            filename=request.filename,
+            user_id=user_id,
+            validate_only=request.validate_only
+        )
+        
+        if not success:
+            return {
+                "success": False,
+                "filename": request.filename,
+                **result
+            }
+        
+        return {
+            "success": True,
+            **result
+        }
+        
+    except Exception as e:
+        logger.error(f"Compilation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Compilation failed: {str(e)}")
+
+@app.post("/api/v1/algorithms/compile-and-deploy")
+async def compile_and_deploy(request: DeployRequest, user: dict = Depends(verify_token)):
+    """
+    Compile and deploy MQL5/MQL4 EA to MT5
+    
+    Args:
+        code: MQL5 source code
+        filename: Filename (e.g., "MyEA.mq5")
+        ea_name: Optional EA name (defaults to filename)
+    
+    Returns:
+        Compilation and deployment results
+    """
+    try:
+        user_id = user.get("sub", "unknown")
+        user_email = user.get("email", "unknown")
+        
+        # Step 1: Compile
+        logger.info(f"Compiling EA for user {user_email}")
+        success, compile_result = mql_compiler.compile_mql(
+            code=request.code,
+            filename=request.filename,
+            user_id=user_id,
+            validate_only=False
+        )
+        
+        if not success:
+            return {
+                "success": False,
+                "stage": "compilation",
+                "filename": request.filename,
+                **compile_result
+            }
+        
+        # Step 2: Deploy
+        compiled_path = compile_result.get("compiled_path")
+        if not compiled_path:
+            return {
+                "success": False,
+                "stage": "deployment",
+                "error": "Compiled file not found"
+            }
+        
+        ea_name = request.ea_name or request.filename
+        logger.info(f"Deploying EA {ea_name} for user {user_email}")
+        
+        deploy_success, deploy_message = mql_compiler.deploy_to_mt5(
+            compiled_file=compiled_path,
+            ea_name=ea_name,
+            user_id=user_id
+        )
+        
+        # Cleanup temp files
+        mql_compiler.cleanup_temp_files(request.filename)
+        
+        if not deploy_success:
+            return {
+                "success": False,
+                "stage": "deployment",
+                "error": deploy_message,
+                **compile_result
+            }
+        
+        return {
+            "success": True,
+            "filename": request.filename,
+            "ea_name": ea_name,
+            "deployed_path": deploy_message,
+            "compile_time": compile_result.get("compile_time", 0),
+            "errors": compile_result.get("errors", []),
+            "warnings": compile_result.get("warnings", [])
+        }
+        
+    except Exception as e:
+        logger.error(f"Deploy error: {e}")
+        raise HTTPException(status_code=500, detail=f"Deployment failed: {str(e)}")
+
+@app.get("/api/v1/algorithms/validate-syntax")
+async def validate_syntax(
+    filename: str = Query(..., description="MQL filename"),
+    user: dict = Depends(verify_token)
+):
+    """
+    Quick syntax validation for MQL code (via query params for testing)
+    """
+    # This is a simple endpoint for quick checks
+    # For full validation, use the compile endpoint with validate_only=True
+    return {
+        "message": "Use POST /api/v1/algorithms/compile with validate_only=true for syntax checking",
+        "example": {
+            "code": "your MQL5 code here",
+            "filename": filename,
+            "validate_only": True
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn

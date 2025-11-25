@@ -592,94 +592,69 @@ async def place_order(
             raise HTTPException(status_code=400, detail="Invalid order_type")
         
         # Get filling mode constants
-        ORDER_FILLING_FOK = get_mt5_const("ORDER_FILLING_FOK")
-        ORDER_FILLING_IOC = get_mt5_const("ORDER_FILLING_IOC")
-        ORDER_FILLING_RETURN = get_mt5_const("ORDER_FILLING_RETURN")
+        ORDER_FILLING_FOK = get_mt5_const("ORDER_FILLING_FOK")  # 0
+        ORDER_FILLING_IOC = get_mt5_const("ORDER_FILLING_IOC")  # 1
+        ORDER_FILLING_RETURN = get_mt5_const("ORDER_FILLING_RETURN")  # 2
+        TRADE_RETCODE_DONE = get_mt5_const("TRADE_RETCODE_DONE")  # 10009
         
-        # Try to determine filling mode from symbol info
+        # Determine filling mode from symbol info
         filling_mode = None
         try:
             if hasattr(symbol_info, 'filling_mode'):
                 filling_modes = symbol_info.filling_mode
-                logger.debug(f"Symbol {request.symbol} filling_mode: {filling_modes}")
+                logger.info(f"Symbol {request.symbol} filling_mode: {filling_modes}")
                 
-                # Check which filling modes are supported (bitwise AND)
-                if ORDER_FILLING_FOK and (filling_modes & ORDER_FILLING_FOK):
-                    filling_mode = ORDER_FILLING_FOK
-                elif ORDER_FILLING_IOC and (filling_modes & ORDER_FILLING_IOC):
+                # filling_mode is a bitmask - check which modes are supported
+                # filling_mode = 1 means IOC is supported
+                if ORDER_FILLING_IOC is not None and (filling_modes & ORDER_FILLING_IOC):
                     filling_mode = ORDER_FILLING_IOC
-                elif ORDER_FILLING_RETURN and (filling_modes & ORDER_FILLING_RETURN):
+                    logger.info(f"Using ORDER_FILLING_IOC (value: {ORDER_FILLING_IOC})")
+                elif ORDER_FILLING_FOK is not None and (filling_modes & ORDER_FILLING_FOK):
+                    filling_mode = ORDER_FILLING_FOK
+                    logger.info(f"Using ORDER_FILLING_FOK (value: {ORDER_FILLING_FOK})")
+                elif ORDER_FILLING_RETURN is not None and (filling_modes & ORDER_FILLING_RETURN):
                     filling_mode = ORDER_FILLING_RETURN
+                    logger.info(f"Using ORDER_FILLING_RETURN (value: {ORDER_FILLING_RETURN})")
         except Exception as e:
-            logger.debug(f"Error reading filling_mode: {e}")
+            logger.warning(f"Error reading filling_mode: {e}")
         
-        # If we couldn't determine, try filling modes in order until one works
-        # Also try without type_filling (some brokers handle it automatically)
-        filling_modes_to_try = []
-        if filling_mode:
-            filling_modes_to_try = [filling_mode]
-        else:
-            # Try in order: RETURN (most common), then FOK, then IOC, then None (auto)
-            if ORDER_FILLING_RETURN:
-                filling_modes_to_try.append(ORDER_FILLING_RETURN)
-            if ORDER_FILLING_FOK:
-                filling_modes_to_try.append(ORDER_FILLING_FOK)
-            if ORDER_FILLING_IOC:
-                filling_modes_to_try.append(ORDER_FILLING_IOC)
-            # Try without type_filling as last resort
-            filling_modes_to_try.append(None)
+        # If we couldn't determine, use IOC as default (most common for forex)
+        if filling_mode is None:
+            filling_mode = ORDER_FILLING_IOC if ORDER_FILLING_IOC is not None else ORDER_FILLING_RETURN
+            logger.info(f"Using default filling mode: {filling_mode}")
         
-        if not filling_modes_to_try:
-            raise HTTPException(status_code=500, detail="Could not determine filling mode constants")
+        # Prepare trade request
+        trade_request = {
+            "action": get_mt5_const("TRADE_ACTION_DEAL"),
+            "symbol": request.symbol,
+            "volume": request.volume,
+            "type": order_type_mt5,
+            "price": price_exec,
+            "sl": request.stop_loss if request.stop_loss else 0,
+            "tp": request.take_profit if request.take_profit else 0,
+            "deviation": 10,
+            "magic": 123456,
+            "comment": "API Trade",
+            "type_time": get_mt5_const("ORDER_TIME_GTC"),
+            "type_filling": filling_mode,
+        }
         
-        # Try each filling mode until one works
-        result = None
-        last_error = None
+        logger.info(f"Sending order: symbol={request.symbol}, type={request.order_type}, volume={request.volume}, filling_mode={filling_mode}")
         
-        for filling_mode in filling_modes_to_try:
-            try:
-                trade_request = {
-                    "action": get_mt5_const("TRADE_ACTION_DEAL"),
-                    "symbol": request.symbol,
-                    "volume": request.volume,
-                    "type": order_type_mt5,
-                    "price": price_exec,
-                    "sl": request.stop_loss if request.stop_loss else 0,
-                    "tp": request.take_profit if request.take_profit else 0,
-                    "deviation": 10,
-                    "magic": 123456,
-                    "comment": "API Trade",
-                    "type_time": get_mt5_const("ORDER_TIME_GTC"),
-                }
-                
-                # Only add type_filling if we have a value
-                if filling_mode is not None:
-                    trade_request["type_filling"] = filling_mode
-                
-                result = mt5.order_send(trade_request)
-                
-                if result.retcode == get_mt5_const("TRADE_RETCODE_DONE"):
-                    logger.info(f"Order succeeded with filling mode: {filling_mode or 'auto'}")
-                    break
-                else:
-                    # If it's not a filling mode error, fail immediately
-                    if result.retcode != 10030:  # 10030 = Unsupported filling mode
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Order failed: {result.comment} (code: {result.retcode})"
-                        )
-                    last_error = result.comment
-                    logger.debug(f"Filling mode {filling_mode or 'auto'} failed: {result.comment}, trying next...")
-            except HTTPException:
-                raise
-            except Exception as e:
-                last_error = str(e)
-                logger.debug(f"Error with filling mode {filling_mode or 'auto'}: {e}, trying next...")
+        # Send order
+        result = mt5.order_send(trade_request)
         
-        if result is None or result.retcode != get_mt5_const("TRADE_RETCODE_DONE"):
+        if result is None:
+            error_msg = mt5.last_error() if hasattr(mt5, 'last_error') else "Order send returned None"
+            logger.error(f"Order send failed: {error_msg}")
+            raise HTTPException(status_code=500, detail=f"Order send failed: {error_msg}")
+        
+        if result.retcode != TRADE_RETCODE_DONE:
+            error_msg = result.comment if hasattr(result, 'comment') else f"Error code: {result.retcode}"
+            logger.error(f"Order failed: {error_msg} (code: {result.retcode})")
             raise HTTPException(
                 status_code=400,
-                detail=f"Order failed: {last_error or 'All filling modes failed'} (code: {result.retcode if result else 'unknown'})"
+                detail=f"Order failed: {error_msg} (code: {result.retcode})"
             )
         
         return {

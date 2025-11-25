@@ -581,13 +581,18 @@ async def place_order(
         if symbol_info is None:
             raise HTTPException(status_code=404, detail=f"Symbol {request.symbol} not found")
         
-        # Determine order type
+        # Get current tick (like working examples do)
+        tick = mt5.symbol_info_tick(request.symbol)
+        if tick is None:
+            raise HTTPException(status_code=404, detail=f"Failed to get tick for {request.symbol}")
+        
+        # Determine order type and price
         if request.order_type.upper() == "BUY":
             order_type_mt5 = get_mt5_const("ORDER_TYPE_BUY")
-            price_exec = symbol_info.ask if request.price is None else request.price
+            price_exec = request.price if request.price is not None else tick.ask
         elif request.order_type.upper() == "SELL":
             order_type_mt5 = get_mt5_const("ORDER_TYPE_SELL")
-            price_exec = symbol_info.bid if request.price is None else request.price
+            price_exec = request.price if request.price is not None else tick.bid
         else:
             raise HTTPException(status_code=400, detail="Invalid order_type")
         
@@ -632,25 +637,30 @@ async def place_order(
         
         for try_filling_mode in filling_modes_to_try:
             try:
+                # Build request dict exactly like working examples
                 trade_request = {
                     "action": get_mt5_const("TRADE_ACTION_DEAL"),
                     "symbol": request.symbol,
-                    "volume": request.volume,
+                    "volume": float(request.volume),
                     "type": order_type_mt5,
-                    "price": price_exec,
-                    "sl": request.stop_loss if request.stop_loss else 0,
-                    "tp": request.take_profit if request.take_profit else 0,
+                    "price": float(price_exec),
                     "deviation": 10,
                     "magic": 123456,
                     "comment": "API Trade",
                     "type_time": get_mt5_const("ORDER_TIME_GTC"),
                 }
                 
+                # Add SL/TP if provided
+                if request.stop_loss:
+                    trade_request["sl"] = float(request.stop_loss)
+                if request.take_profit:
+                    trade_request["tp"] = float(request.take_profit)
+                
                 # Only add type_filling if we have a value
                 if try_filling_mode is not None:
                     trade_request["type_filling"] = try_filling_mode
                 
-                logger.info(f"Trying order: symbol={request.symbol}, type={request.order_type}, volume={request.volume}, filling_mode={try_filling_mode or 'auto'}")
+                logger.info(f"Trying order: symbol={request.symbol}, type={request.order_type}, volume={request.volume}, price={price_exec}, filling_mode={try_filling_mode or 'auto'}")
                 
                 # Send order
                 result = mt5.order_send(trade_request)

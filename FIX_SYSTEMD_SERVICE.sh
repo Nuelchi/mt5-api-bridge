@@ -111,3 +111,5 @@ echo "   View logs: journalctl -u mt5-terminal -f"
 echo "   Restart: systemctl restart mt5-terminal"
 echo ""
 
+
+

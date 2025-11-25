@@ -101,3 +101,5 @@ echo "   Python: $(python --version)"
 echo "   Test MT5: python3 test_mt5_connection.py"
 echo ""
 
+
+

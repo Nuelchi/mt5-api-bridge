@@ -70,3 +70,5 @@ wine mt5setup.exe
 
 The easiest solution is to use Python 3.11 instead of 3.12.
 
+
+

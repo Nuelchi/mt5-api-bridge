@@ -109,3 +109,5 @@ else
     echo "   python3 -m mt5linux --host 0.0.0.0 -p 8001 -w 'DISPLAY=:99 wine' python.exe"
 fi
 
+
+

@@ -183,3 +183,5 @@ wine mt5setup.exe
 
 I'll create an updated script that handles MT5 Terminal installation too.
 
+
+

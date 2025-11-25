@@ -161,3 +161,5 @@ echo "   4. View logs: journalctl -u mt5-api -f"
 echo "   5. Configure Nginx: ./deploy_vps.sh"
 echo ""
 
+
+

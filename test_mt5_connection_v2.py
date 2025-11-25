@@ -144,3 +144,5 @@ elif MT5_LIBRARY == "MetaTrader5":
 
 print("\n" + "=" * 60)
 
+
+

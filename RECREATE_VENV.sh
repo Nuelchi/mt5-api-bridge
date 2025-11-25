@@ -72,3 +72,5 @@ echo "   Python: $(python --version)"
 echo "   Test with: python3 test_mt5_connection.py"
 echo ""
 
+
+

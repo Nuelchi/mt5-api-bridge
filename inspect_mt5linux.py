@@ -35,3 +35,5 @@ print("Module docstring:")
 print("-" * 60)
 print(mt5.__doc__ if hasattr(mt5, '__doc__') and mt5.__doc__ else "No docstring")
 
+
+

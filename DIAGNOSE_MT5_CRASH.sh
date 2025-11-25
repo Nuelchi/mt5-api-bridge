@@ -149,3 +149,5 @@ else
     echo "   4. Try running MT5 with: DISPLAY=:99 wine '$MT5_EXE'"
 fi
 
+
+

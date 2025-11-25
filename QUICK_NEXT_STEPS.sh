@@ -140,3 +140,5 @@ echo "   3. Configure Nginx: ./NGINX_CONFIG.sh"
 echo "   4. Set up SSL: certbot --nginx -d trade.trainflow.dev"
 echo ""
 
+
+

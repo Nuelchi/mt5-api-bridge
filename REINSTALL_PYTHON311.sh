@@ -44,3 +44,5 @@ echo "   Python version: $(python --version)"
 echo "   Now you can continue with deployment"
 echo ""
 
+
+

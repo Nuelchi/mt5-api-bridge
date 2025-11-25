@@ -231,3 +231,5 @@ All environment variables are configured. You can now:
 
 **Everything is ready!** 🚀
 
+
+

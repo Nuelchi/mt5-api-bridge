@@ -102,3 +102,5 @@ print(account)
 - **Cause**: MT5 Terminal is not logged in
 - **Solution**: Log in to MT5 Terminal manually first, then the Python API can access it
 
+
+

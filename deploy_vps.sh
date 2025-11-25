@@ -156,3 +156,5 @@ echo "   2. Test JWT authentication: python3 test_jwt_auth.py"
 echo "   3. View API docs: http://your-vps-ip:8001/docs"
 echo ""
 
+
+

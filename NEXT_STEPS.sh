@@ -134,3 +134,5 @@ echo "   3. Test API: curl http://localhost:8001/health"
 echo "   4. View logs: journalctl -u mt5-api -f"
 echo ""
 
+
+

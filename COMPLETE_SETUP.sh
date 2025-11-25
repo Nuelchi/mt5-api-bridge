@@ -119,3 +119,5 @@ echo "   2. Test API: curl https://trade.trainflow.dev/health"
 echo "   3. View API docs: https://trade.trainflow.dev/docs"
 echo ""
 
+
+

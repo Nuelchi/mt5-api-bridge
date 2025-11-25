@@ -188,3 +188,5 @@ echo "   3. Check status: systemctl status mt5-terminal"
 echo "   4. View logs: journalctl -u mt5-terminal -f"
 echo ""
 
+
+

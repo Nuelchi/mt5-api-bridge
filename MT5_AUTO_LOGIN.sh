@@ -219,3 +219,5 @@ echo "   1. Wait 30 seconds for MT5 Terminal to fully start"
 echo "   2. Run: ./TEST_AND_SETUP.sh"
 echo ""
 
+
+

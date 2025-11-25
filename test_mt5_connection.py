@@ -73,3 +73,5 @@ if hasattr(mt5, 'shutdown'):
 
 print("\n" + "=" * 60)
 
+
+

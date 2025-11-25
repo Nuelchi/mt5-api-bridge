@@ -42,3 +42,5 @@ echo "✅ MT5 installation attempt complete"
 echo "   Test with: python3 test_mt5_connection.py"
 echo ""
 
+
+

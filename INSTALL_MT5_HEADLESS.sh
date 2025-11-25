@@ -106,3 +106,5 @@ echo "   3. Install RPC server EA in MT5"
 echo "   4. Test connection: python3 test_mt5_connection_v3.py"
 echo ""
 
+
+

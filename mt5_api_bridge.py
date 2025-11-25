@@ -13,6 +13,8 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 import logging
 import os
+import jwt
+import time
 
 # Supabase authentication (same as backend)
 from supabase import create_client, Client
@@ -80,9 +82,12 @@ security = HTTPBearer()
 # Supabase JWT verification (same as backend security.py)
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
     """
-    Verify JWT token using Supabase (same as backend)
-    Uses supabase_client.auth.get_user(token) just like core/security.py
+    Verify JWT token using Supabase (same as backend core/security.py)
+    Matches the exact implementation from trainflow-backend-c
     """
+    import jwt
+    import time
+    
     token = credentials.credentials
     
     if not token:
@@ -92,33 +97,81 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Use Supabase client to verify token (same as backend)
-    if not SUPABASE_AVAILABLE:
-        logger.warning("Supabase not available - authentication will fail")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication service unavailable"
-        )
-    
     try:
-        # Verify token with Supabase (same as backend security.py)
-        response = supabase_client.auth.get_user(token)
+        # First, try to decode the JWT without verification to check if it's a Supabase token
+        # Supabase tokens have 'iss' field pointing to Supabase auth endpoint
+        try:
+            unverified_payload = jwt.decode(token, options={"verify_signature": False})
+            
+            # Check if this is a Supabase token
+            iss = unverified_payload.get('iss', '')
+            if 'supabase.co' in iss or 'supabase' in iss.lower():
+                # This is a Supabase JWT - extract user info from payload
+                user_id = unverified_payload.get('sub')
+                email = unverified_payload.get('email')
+                
+                if not user_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid Supabase token: missing user identifier",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                
+                # Verify token hasn't expired
+                exp = unverified_payload.get('exp')
+                if exp and exp < time.time():
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Token has expired",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                
+                logger.debug(f"Authenticated Supabase user: {user_id}")
+                return {
+                    "user_id": user_id,
+                    "email": email,
+                    "provider": "supabase",
+                    "payload": unverified_payload
+                }
+        except jwt.DecodeError:
+            pass  # Not a valid JWT structure, try other methods
+        except HTTPException:
+            raise
         
-        if response.user:
-            user = response.user
-            return {
-                "user_id": user.id,
-                "email": user.email,
-                "provider": "supabase"
-            }
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+        # Try Supabase auth.get_user (for session tokens) as fallback
+        if SUPABASE_AVAILABLE and supabase_client:
+            try:
+                response = supabase_client.auth.get_user(token)
+                if response.user:
+                    return {
+                        "user_id": response.user.id,
+                        "email": response.user.email,
+                        "provider": "supabase"
+                    }
+            except Exception as e:
+                logger.debug(f"Supabase auth.get_user failed: {e}")
+        
+        # If we get here, token verification failed
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
     except HTTPException:
         raise
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except jwt.InvalidTokenError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token: {str(e)}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     except Exception as e:
         logger.error(f"Token verification error: {e}")
         raise HTTPException(

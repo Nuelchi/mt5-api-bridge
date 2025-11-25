@@ -614,17 +614,20 @@ async def place_order(
             logger.debug(f"Error reading filling_mode: {e}")
         
         # If we couldn't determine, try filling modes in order until one works
+        # Also try without type_filling (some brokers handle it automatically)
         filling_modes_to_try = []
         if filling_mode:
             filling_modes_to_try = [filling_mode]
         else:
-            # Try in order: RETURN (most common), then FOK, then IOC
+            # Try in order: RETURN (most common), then FOK, then IOC, then None (auto)
             if ORDER_FILLING_RETURN:
                 filling_modes_to_try.append(ORDER_FILLING_RETURN)
             if ORDER_FILLING_FOK:
                 filling_modes_to_try.append(ORDER_FILLING_FOK)
             if ORDER_FILLING_IOC:
                 filling_modes_to_try.append(ORDER_FILLING_IOC)
+            # Try without type_filling as last resort
+            filling_modes_to_try.append(None)
         
         if not filling_modes_to_try:
             raise HTTPException(status_code=500, detail="Could not determine filling mode constants")
@@ -647,13 +650,16 @@ async def place_order(
                     "magic": 123456,
                     "comment": "API Trade",
                     "type_time": get_mt5_const("ORDER_TIME_GTC"),
-                    "type_filling": filling_mode,
                 }
+                
+                # Only add type_filling if we have a value
+                if filling_mode is not None:
+                    trade_request["type_filling"] = filling_mode
                 
                 result = mt5.order_send(trade_request)
                 
                 if result.retcode == get_mt5_const("TRADE_RETCODE_DONE"):
-                    logger.info(f"Order succeeded with filling mode: {filling_mode}")
+                    logger.info(f"Order succeeded with filling mode: {filling_mode or 'auto'}")
                     break
                 else:
                     # If it's not a filling mode error, fail immediately
@@ -663,12 +669,12 @@ async def place_order(
                             detail=f"Order failed: {result.comment} (code: {result.retcode})"
                         )
                     last_error = result.comment
-                    logger.debug(f"Filling mode {filling_mode} failed: {result.comment}, trying next...")
+                    logger.debug(f"Filling mode {filling_mode or 'auto'} failed: {result.comment}, trying next...")
             except HTTPException:
                 raise
             except Exception as e:
                 last_error = str(e)
-                logger.debug(f"Error with filling mode {filling_mode}: {e}, trying next...")
+                logger.debug(f"Error with filling mode {filling_mode or 'auto'}: {e}, trying next...")
         
         if result is None or result.retcode != get_mt5_const("TRADE_RETCODE_DONE"):
             raise HTTPException(

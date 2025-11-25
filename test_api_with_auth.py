@@ -14,7 +14,7 @@ API_URL = "https://trade.trainflow.dev"
 # Or use localhost: API_URL = "http://localhost:8000"
 
 # Fresh JWT token
-TOKEN = "eyJhbGciOiJIUzI1NiIsImtpZCI6IllTcHdzeW44YVMwdTRNWFMiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2tnZnpia3d5ZXBjaGJ5c2F5c2t5LnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiIwYjNlMTY1Yy0yNjYxLTQ2NWYtODFiYS1jYjVlOWU0YWJjNjEiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzY0MDQwMTUwLCJpYXQiOjE3NjQwMzY1NTAsImVtYWlsIjoiZG94YWZvcmV4NTVAZ21haWwuY29tIiwicGhvbmUiOiIiLCJhcHBfbWV0YWRhdGEiOnsicHJvdmlkZXIiOiJlbWFpbCIsInByb3ZpZGVycyI6WyJlbWFpbCJdfSwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbCI6ImRveGFmb3JleDU1QGdtYWlsLmNvbSIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJwaG9uZV92ZXJpZmllZCI6ZmFsc2UsInN1YiI6IjBiM2UxNjVjLTI2NjEtNDY1Zi04MWJhLWNiNWU5ZTRhYmM2MSJ9LCJyb2xlIjoiYXV0aGVudGljYXRlZCIsImFhbCI6ImFhbDEiLCJhbXIiOlt7Im1ldGhvZCI6InBhc3N3b3JkIiwidGltZXN0YW1wIjoxNzY0MDM2NTUwfV0sInNlc3Npb25faWQiOiIyYjRlZGE0MC1iNjc4LTQ2YWYtODFlNC1lNjg0OTEzMzQxYTciLCJpc19hbm9ueW1vdXMiOmZhbHNlfQ._pby8X0lFBqBP4C556r4jRINbr5arFDbr043pKwK5a0"
+TOKEN = "eyJhbGciOiJIUzI1NiIsImtpZCI6IllTcHdzeW44YVMwdTRNWFMiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2tnZnpia3d5ZXBjaGJ5c2F5c2t5LnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiIwYjNlMTY1Yy0yNjYxLTQ2NWYtODFiYS1jYjVlOWU0YWJjNjEiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzY0MDQxMDc4LCJpYXQiOjE3NjQwMzc0NzgsImVtYWlsIjoiZG94YWZvcmV4NTVAZ21haWwuY29tIiwicGhvbmUiOiIiLCJhcHBfbWV0YWRhdGEiOnsicHJvdmlkZXIiOiJlbWFpbCIsInByb3ZpZGVycyI6WyJlbWFpbCJdfSwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbCI6ImRveGFmb3JleDU1QGdtYWlsLmNvbSIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJwaG9uZV92ZXJpZmllZCI6ZmFsc2UsInN1YiI6IjBiM2UxNjVjLTI2NjEtNDY1Zi04MWJhLWNiNWU5ZTRhYmM2MSJ9LCJyb2xlIjoiYXV0aGVudGljYXRlZCIsImFhbCI6ImFhbDEiLCJhbXIiOlt7Im1ldGhvZCI6InBhc3N3b3JkIiwidGltZXN0YW1wIjoxNzY0MDM3NDc4fV0sInNlc3Npb25faWQiOiI3NjE3NDVlNS0yYjYwLTQ0ZjEtYjlkOC1iNjIxOTg3OGRhMGYiLCJpc19hbm9ueW1vdXMiOmZhbHNlfQ.FQHeoPrD4_d7ktOeS8dMNlraTUpWBp0WUGc6uxpxTlw"
 
 def test_endpoint(endpoint, method="GET", data=None, description=""):
     """Test an API endpoint"""
@@ -33,11 +33,11 @@ def test_endpoint(endpoint, method="GET", data=None, description=""):
     
     try:
         if method == "GET":
-            response = requests.get(url, headers=headers, timeout=15)
+            response = requests.get(url, headers=headers, timeout=30)
         elif method == "POST":
-            response = requests.post(url, headers=headers, json=data, timeout=15)
+            response = requests.post(url, headers=headers, json=data, timeout=30)
         elif method == "DELETE":
-            response = requests.delete(url, headers=headers, timeout=15)
+            response = requests.delete(url, headers=headers, timeout=30)
         
         print(f"Status Code: {response.status_code}")
         

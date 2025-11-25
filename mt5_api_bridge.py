@@ -593,22 +593,42 @@ async def place_order(
         
         # Determine filling mode based on symbol properties
         filling_mode = None
-        filling_modes = symbol_info.filling_mode
-        
-        # Try different filling modes in order of preference
         ORDER_FILLING_FOK = get_mt5_const("ORDER_FILLING_FOK")
         ORDER_FILLING_IOC = get_mt5_const("ORDER_FILLING_IOC")
         ORDER_FILLING_RETURN = get_mt5_const("ORDER_FILLING_RETURN")
         
-        if filling_modes & ORDER_FILLING_FOK:
-            filling_mode = ORDER_FILLING_FOK
-        elif filling_modes & ORDER_FILLING_IOC:
-            filling_mode = ORDER_FILLING_IOC
-        elif filling_modes & ORDER_FILLING_RETURN:
+        # Try to get filling mode from symbol info
+        try:
+            if hasattr(symbol_info, 'filling_mode'):
+                filling_modes = symbol_info.filling_mode
+                logger.debug(f"Symbol {request.symbol} filling_mode: {filling_modes}")
+                
+                # Check which filling modes are supported (bitwise AND)
+                if filling_modes & ORDER_FILLING_FOK:
+                    filling_mode = ORDER_FILLING_FOK
+                    logger.debug("Using ORDER_FILLING_FOK")
+                elif filling_modes & ORDER_FILLING_IOC:
+                    filling_mode = ORDER_FILLING_IOC
+                    logger.debug("Using ORDER_FILLING_IOC")
+                elif filling_modes & ORDER_FILLING_RETURN:
+                    filling_mode = ORDER_FILLING_RETURN
+                    logger.debug("Using ORDER_FILLING_RETURN")
+                else:
+                    # Default to RETURN if nothing matches
+                    filling_mode = ORDER_FILLING_RETURN
+                    logger.debug("No matching filling mode, defaulting to RETURN")
+            else:
+                # Symbol info doesn't have filling_mode attribute, try RETURN first
+                filling_mode = ORDER_FILLING_RETURN
+                logger.debug("Symbol info has no filling_mode attribute, using RETURN")
+        except Exception as e:
+            logger.warning(f"Error determining filling mode: {e}, defaulting to RETURN")
             filling_mode = ORDER_FILLING_RETURN
-        else:
-            # Default to RETURN if nothing else is available
+        
+        # Fallback: if still None, use RETURN
+        if filling_mode is None:
             filling_mode = ORDER_FILLING_RETURN
+            logger.debug("Filling mode was None, defaulting to RETURN")
         
         # Prepare request
         trade_request = {

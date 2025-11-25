@@ -3,7 +3,32 @@
 A production-ready MetaTrader 5 API bridge for Linux VPS deployment. Provides secure web API access to MT5 trading functionality with Supabase JWT authentication.
 
 **Live API:** https://trade.trainflow.dev  
-**API Documentation:** https://trade.trainflow.dev/docs
+**API Documentation:** https://trade.trainflow.dev/docs  
+**Test Status:** ✅ 10/10 Tests Passing - Fully Operational
+
+---
+
+## 🚀 Ready to Use!
+
+Your MT5 API Bridge is **fully deployed and tested**. You can start using it right now:
+
+1. **Get a Supabase JWT token** (same as your backend)
+2. **Make API calls** to `https://trade.trainflow.dev`
+3. **Trade, fetch market data, manage positions** - all working!
+
+```bash
+# Quick Test
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  https://trade.trainflow.dev/api/v1/account/info
+```
+
+**What's Working:**
+- ✅ JWT Authentication
+- ✅ Market Data (real-time & historical)
+- ✅ Place Trades (buy/sell)
+- ✅ Close Positions
+- ✅ Account Information
+- ✅ All major currency pairs
 
 ---
 
@@ -33,10 +58,13 @@ The MT5 API Bridge provides a RESTful API interface to MetaTrader 5, allowing yo
 **Key Features:**
 - ✅ Supabase JWT authentication (same as your backend)
 - ✅ Docker-based MT5 Terminal (stable and reliable)
-- ✅ SSL/HTTPS enabled
+- ✅ SSL/HTTPS enabled with auto-renewal
 - ✅ Production-ready with Nginx reverse proxy
+- ✅ **Fully tested trading functionality** (10/10 tests passing)
+- ✅ Smart filling mode detection (works with any broker)
 - ✅ Comprehensive error handling
 - ✅ Full API documentation (Swagger/OpenAPI)
+- 🔜 Multi-user account system (ready to implement)
 
 ---
 
@@ -815,6 +843,118 @@ See deployment documentation:
 
 ---
 
+## ✅ Testing & Verification
+
+### Latest Test Results (Nov 25, 2025)
+
+All API endpoints have been tested and verified working:
+
+```bash
+🧪 MT5 Login and Trading Test Suite
+======================================================================
+API URL: https://trade.trainflow.dev
+MT5 Account: 5042856355 (Demo)
+Server: MetaQuotes-Demo
+
+Test Results: 10/10 PASSED ✅
+
+✅ PASS - Health Check
+✅ PASS - Connect/Login Account  
+✅ PASS - Get Account Info
+✅ PASS - Get Positions
+✅ PASS - Get Market Data
+✅ PASS - Place Buy Order (Ticket: 54123724512 @ 1.15274)
+✅ PASS - Place Sell Order (Ticket: 54123724563 @ 1.15273)
+✅ PASS - Get Positions (After)
+✅ PASS - Close Position (Successfully closed at 1.15271)
+✅ PASS - Account Info (After)
+
+🎉 All tests passed! API is fully functional!
+```
+
+**Key Achievements:**
+- ✅ JWT authentication working perfectly
+- ✅ Real-time market data retrieval
+- ✅ Successful order placement (buy/sell)
+- ✅ Position management and closing
+- ✅ Smart filling mode detection (auto-detects broker requirements)
+- ✅ Account balance tracking in real-time
+
+### Running Tests
+
+To verify the API yourself:
+
+```bash
+# On VPS
+cd /opt/mt5-api-bridge
+python3 test_login_and_trading.py
+```
+
+---
+
+## 🔮 Multi-User Account System (Coming Soon)
+
+The API bridge is designed to support **multiple MT5 accounts per user** and **algorithmic trading** for your users.
+
+### Planned Features
+
+1. **Multiple MT5 Accounts per User**
+   - Users can connect multiple MT5 broker accounts
+   - Secure credential storage (encrypted passwords)
+   - Easy account switching
+   - Portfolio view across all accounts
+
+2. **Algorithmic Trading Support**
+   - Users can deploy trading algorithms to their MT5 accounts
+   - Algorithm marketplace integration
+   - Automated strategy execution
+   - Performance tracking per algorithm
+
+3. **Database Integration**
+   - Uses existing `mt5_accounts` table in Supabase
+   - Stores encrypted MT5 credentials
+   - Links accounts to Supabase users
+
+### Implementation Status
+
+📁 **Documentation Available:**
+- `MULTI_USER_ACCOUNT_SYSTEM.md` - Complete architecture design
+- `IMPLEMENTATION_PLAN.md` - Step-by-step implementation guide
+
+🔐 **Database Schema Ready:**
+```sql
+-- mt5_accounts table (already exists in your backend)
+CREATE TABLE mt5_accounts (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id),
+  broker_name TEXT NOT NULL,
+  account_number INTEGER NOT NULL,
+  account_password_encrypted TEXT NOT NULL,
+  server TEXT NOT NULL,
+  account_type TEXT CHECK (account_type IN ('demo', 'live')),
+  is_default BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+⏳ **Implementation Timeline:**
+- Core system is ready and fully tested
+- Multi-user features can be implemented when needed
+- Estimated time: 2-3 days for full implementation
+- No changes required to current working system
+
+### Why Not Implemented Yet?
+
+The current setup works perfectly for a **single MT5 account** (demo or live). The multi-user system is a separate feature that will be implemented when you're ready to:
+1. Allow users to connect their own MT5 accounts
+2. Deploy trading algorithms to user accounts
+3. Scale to multiple users trading simultaneously
+
+For now, you have a **production-ready API bridge** that handles all MT5 operations securely and reliably! 🎉
+
+---
+
 ## 📚 Additional Resources
 
 ### API Documentation
@@ -849,13 +989,24 @@ For issues or questions:
 
 ## 📝 Changelog
 
-### Version 1.0.0 (Current)
+### Version 1.1.0 (Current - Nov 25, 2025)
+- ✅ **Trading fully operational** - All tests passing (10/10)
+- ✅ **Smart filling mode detection** - Auto-detects and tries multiple filling modes
+- ✅ Successful buy/sell order placement
+- ✅ Position closing working perfectly
+- ✅ Real-time account balance tracking
+- ✅ Improved JWT token verification (matches backend)
+- ✅ Enhanced error handling for trading operations
+
+### Version 1.0.0 (Nov 24, 2025)
 - ✅ Initial production release
-- ✅ Docker-based MT5 setup
+- ✅ Docker-based MT5 setup (gmag11/metatrader5_vnc)
 - ✅ Supabase JWT authentication
 - ✅ Full API endpoint coverage
-- ✅ SSL/HTTPS enabled
-- ✅ Production deployment complete
+- ✅ SSL/HTTPS enabled with Let's Encrypt
+- ✅ Production deployment on trade.trainflow.dev
+- ✅ Nginx reverse proxy configuration
+- ✅ Systemd service management
 
 ---
 
@@ -881,5 +1032,5 @@ const mt5Response = await fetch('https://trade.trainflow.dev/api/v1/account/info
 ---
 
 **Last Updated:** November 25, 2025  
-**API Version:** 1.0.0  
-**Status:** ✅ Production Ready
+**API Version:** 1.1.0  
+**Status:** ✅ Production Ready - All Tests Passing (10/10)

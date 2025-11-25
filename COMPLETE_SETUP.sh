@@ -13,22 +13,15 @@ echo ""
 # Step 1: Test MT5 Connection
 echo "[1/5] Testing MT5 Connection..."
 echo "================================"
-export DISPLAY=:99
-export WINEPREFIX="$HOME/.wine"
 
-# Check if MT5 Terminal is running
-if ! pgrep -f "terminal64.exe\|terminal.exe" > /dev/null; then
-    echo "⚠️  MT5 Terminal is not running"
-    echo "   Starting MT5 Terminal..."
-    MT5FILE="$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe"
-    DISPLAY=:99 WINEDLLOVERRIDES="mscoree,mshtml=" wine "$MT5FILE" >/dev/null 2>&1 &
-    sleep 10
-    echo "   ⚠️  Please log in to MT5 Terminal manually"
-    echo "      Server: MetaQuotes-Demo"
-    echo "      Login: 5042856355"
-    echo "      Password: V!QzRxQ7"
-    echo ""
-    read -p "Press Enter after logging in to MT5 Terminal..."
+# Check if Docker container is running
+if docker ps | grep -q mt5; then
+    echo "✅ Docker MT5 container is running"
+else
+    echo "❌ Docker MT5 container is not running"
+    echo "   Start it with: docker start mt5"
+    echo "   Or run: ./SETUP_DOCKER_MT5.sh"
+    exit 1
 fi
 
 # Test connection
@@ -99,7 +92,7 @@ echo "[5/5] Final Status Check"
 echo "======================="
 echo ""
 echo "📊 Service Status:"
-echo "   RPyC Server: $(systemctl is-active mt5-rpyc 2>/dev/null && echo '✅ Running' || echo '❌ Not running')"
+echo "   Docker MT5: $(docker ps | grep -q mt5 && echo '✅ Running' || echo '❌ Not running')"
 echo "   API Service: $(systemctl is-active mt5-api 2>/dev/null && echo '✅ Running' || echo '❌ Not running')"
 echo "   Nginx: $(systemctl is-active nginx 2>/dev/null && echo '✅ Running' || echo '❌ Not running')"
 echo ""
@@ -114,9 +107,10 @@ echo ""
 echo "✅ Setup Complete!"
 echo ""
 echo "📋 Next Steps:"
-echo "   1. Ensure MT5 Terminal is running and logged in"
+echo "   1. MT5 is running in Docker and logged in ✅"
 echo "   2. Test API: curl https://trade.trainflow.dev/health"
 echo "   3. View API docs: https://trade.trainflow.dev/docs"
+echo "   4. Access MT5 GUI: http://147.182.206.223:3000"
 echo ""
 
 

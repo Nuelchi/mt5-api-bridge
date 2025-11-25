@@ -581,6 +581,25 @@ async def place_order(
         else:
             raise HTTPException(status_code=400, detail="Invalid order_type")
         
+        # Determine filling mode based on symbol properties
+        filling_mode = None
+        filling_modes = symbol_info.filling_mode
+        
+        # Try different filling modes in order of preference
+        ORDER_FILLING_FOK = get_mt5_const("ORDER_FILLING_FOK")
+        ORDER_FILLING_IOC = get_mt5_const("ORDER_FILLING_IOC")
+        ORDER_FILLING_RETURN = get_mt5_const("ORDER_FILLING_RETURN")
+        
+        if filling_modes & ORDER_FILLING_FOK:
+            filling_mode = ORDER_FILLING_FOK
+        elif filling_modes & ORDER_FILLING_IOC:
+            filling_mode = ORDER_FILLING_IOC
+        elif filling_modes & ORDER_FILLING_RETURN:
+            filling_mode = ORDER_FILLING_RETURN
+        else:
+            # Default to RETURN if nothing else is available
+            filling_mode = ORDER_FILLING_RETURN
+        
         # Prepare request
         trade_request = {
             "action": get_mt5_const("TRADE_ACTION_DEAL"),
@@ -594,7 +613,7 @@ async def place_order(
             "magic": 123456,
             "comment": "API Trade",
             "type_time": get_mt5_const("ORDER_TIME_GTC"),
-            "type_filling": get_mt5_const("ORDER_FILLING_IOC"),
+            "type_filling": filling_mode,
         }
         
         # Send order
@@ -671,6 +690,26 @@ async def close_position(ticket: int, user: dict = Depends(verify_token)):
         
         close_price = symbol_info.bid if close_type == ORDER_TYPE_SELL else symbol_info.ask
         
+        # Get symbol info to determine filling mode
+        symbol_info = mt5.symbol_info(pos.symbol)
+        filling_mode = None
+        if symbol_info:
+            filling_modes = symbol_info.filling_mode
+            ORDER_FILLING_FOK = get_mt5_const("ORDER_FILLING_FOK")
+            ORDER_FILLING_IOC = get_mt5_const("ORDER_FILLING_IOC")
+            ORDER_FILLING_RETURN = get_mt5_const("ORDER_FILLING_RETURN")
+            
+            if filling_modes & ORDER_FILLING_FOK:
+                filling_mode = ORDER_FILLING_FOK
+            elif filling_modes & ORDER_FILLING_IOC:
+                filling_mode = ORDER_FILLING_IOC
+            elif filling_modes & ORDER_FILLING_RETURN:
+                filling_mode = ORDER_FILLING_RETURN
+            else:
+                filling_mode = ORDER_FILLING_RETURN
+        else:
+            filling_mode = get_mt5_const("ORDER_FILLING_RETURN")
+        
         request = {
             "action": get_mt5_const("TRADE_ACTION_DEAL"),
             "symbol": pos.symbol,
@@ -682,7 +721,7 @@ async def close_position(ticket: int, user: dict = Depends(verify_token)):
             "magic": pos.magic,
             "comment": "Close Position",
             "type_time": get_mt5_const("ORDER_TIME_GTC"),
-            "type_filling": get_mt5_const("ORDER_FILLING_IOC"),
+            "type_filling": filling_mode,
         }
         
         result = mt5.order_send(request)

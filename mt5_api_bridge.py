@@ -223,7 +223,16 @@ async def startup():
             
             try:
                 MT5_INSTANCE = MetaTrader5(host=rpc_host, port=rpc_port)
-                logger.info(f"✅ Connected to MT5 Terminal at {rpc_host}:{rpc_port}")
+                logger.info(f"✅ Created MT5 instance for {rpc_host}:{rpc_port}")
+                
+                # Initialize MT5 connection
+                logger.info("   Initializing MT5 connection...")
+                if not MT5_INSTANCE.initialize():
+                    error = MT5_INSTANCE.last_error() if hasattr(MT5_INSTANCE, 'last_error') else "Unknown error"
+                    logger.warning(f"⚠️  MT5 initialize() returned False: {error}")
+                    logger.info("   MT5 Terminal may not be logged in yet")
+                else:
+                    logger.info("   ✅ MT5 initialized successfully")
                 
                 # Test connection
                 try:
@@ -232,6 +241,7 @@ async def startup():
                         logger.info(f"✅ MT5 connection verified - Account: {account.login}")
                     else:
                         logger.warning("⚠️  Connected but account_info() returned None")
+                        logger.info("   MT5 Terminal may not be logged in yet")
                 except Exception as e:
                     logger.warning(f"⚠️  Connection test failed: {e}")
                     logger.info("   MT5 Terminal may not be logged in yet")

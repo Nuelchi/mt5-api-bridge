@@ -8,12 +8,6 @@
 #property version   "1.00"
 #property strict
 
-//--- Include necessary libraries
-#include <Trade\Trade.mqh>
-#include <Trade\PositionInfo.mqh>
-#include <Trade\AccountInfo.mqh>
-#include <Trade\SymbolInfo.mqh>
-
 // --- Backwards compatibility for older MT5 builds (ensure filling constants exist)
 #ifndef ORDER_FILLING_FOK
 #define ORDER_FILLING_FOK 0
@@ -26,6 +20,12 @@
 #ifndef ORDER_FILLING_RETURN
 #define ORDER_FILLING_RETURN 2
 #endif
+
+//--- Include necessary libraries
+#include <Trade\Trade.mqh>
+#include <Trade\PositionInfo.mqh>
+#include <Trade\AccountInfo.mqh>
+#include <Trade\SymbolInfo.mqh>
 
 //--- Input parameters
 input group "=== Moving Average Settings ==="

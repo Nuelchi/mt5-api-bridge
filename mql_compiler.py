@@ -113,13 +113,40 @@ class MQLCompiler:
         except Exception as e:
             return False, {"error": f"Failed to write source file: {e}"}
         
-        # Log file
-        log_file = os.path.join(self.compile_temp_dir, f"{Path(filename).stem}.log")
+        # Paths (host vs container)
+        base_name = Path(filename).stem
+        log_file = os.path.join(self.compile_temp_dir, f"{base_name}.log")
+        container_source_dir = "/tmp/mql_compile"
+        container_source_path = f"{container_source_dir}/{filename}"
+        container_log_path = f"{container_source_dir}/{base_name}.log"
         
-        # Build Docker exec command to compile
-        # The Docker container has wine and MetaEditor64.exe
-        docker_source_path = f"/tmp/mql_compile/{filename}"
-        docker_log_path = f"/tmp/mql_compile/{Path(filename).stem}.log"
+        # Ensure directory exists inside container and copy source file over
+        try:
+            subprocess.run(
+                [self.docker_bin, "exec", self.docker_container,
+                 "mkdir", "-p", container_source_dir],
+                check=True,
+                capture_output=True
+            )
+            
+            subprocess.run(
+                [self.docker_bin, "cp", source_file,
+                 f"{self.docker_container}:{container_source_path}"],
+                check=True,
+                capture_output=True
+            )
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to copy source into container: {e}")
+            return False, {"error": f"Failed to prepare container for compilation: {e}"}
+        
+        # Build Docker exec command to compile inside container
+        # MetaEditor will read/write from /tmp/mql_compile
+        compile_cmd = [
+            self.docker_bin, "exec", self.docker_container,
+            "wine", f"{self.mt5_terminal_path}/{self.metaeditor_exe}",
+            f'/compile:"{container_source_path}"',
+            f'/log:"{container_log_path}"'
+        ]
         
         compile_cmd = [
             self.docker_bin, "exec", self.docker_container,
@@ -144,6 +171,18 @@ class MQLCompiler:
             
             compile_time = time.time() - start_time
             
+            # Copy log file back from container (if it exists)
+            try:
+                subprocess.run(
+                    [self.docker_bin, "cp",
+                     f"{self.docker_container}:{container_log_path}",
+                     log_file],
+                    check=True,
+                    capture_output=True
+                )
+            except subprocess.CalledProcessError:
+                logger.warning("Could not copy compilation log from container")
+            
             # Read log file
             log_content = ""
             if os.path.exists(log_file):
@@ -160,11 +199,25 @@ class MQLCompiler:
             compiled_path = None
             if success and not validate_only:
                 if filename.endswith('.mq5'):
+                    container_compiled_path = f"{container_source_dir}/{base_name}.ex5"
                     compiled_file = source_file.replace('.mq5', '.ex5')
                 else:
+                    container_compiled_path = f"{container_source_dir}/{base_name}.ex4"
                     compiled_file = source_file.replace('.mq4', '.ex4')
                 
-                if os.path.exists(compiled_file):
+                try:
+                    subprocess.run(
+                        [self.docker_bin, "cp",
+                         f"{self.docker_container}:{container_compiled_path}",
+                         compiled_file],
+                        check=True,
+                        capture_output=True
+                    )
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"Could not copy compiled file: {e}")
+                    compiled_file = None
+                
+                if compiled_file and os.path.exists(compiled_file):
                     compiled_path = compiled_file
             
             result_dict = {

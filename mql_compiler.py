@@ -129,9 +129,6 @@ class MQLCompiler:
         container_source_dir = "/tmp/mql_compile"
         container_source_path = f"{container_source_dir}/{filename}"
         container_log_path = f"{container_source_dir}/{base_name}.log"
-        wine_source_path = self.to_wine_path(container_source_path)
-        wine_log_path = self.to_wine_path(container_log_path)
-        
         # Ensure directory exists inside container and copy source file over
         try:
             subprocess.run(
@@ -184,12 +181,17 @@ class MQLCompiler:
         metaeditor_linux_path = (
             f"{self.wine_prefix}/drive_c/Program Files/MetaTrader 5/{self.metaeditor_exe}"
         )
-        
+
+        compile_cmd.extend(["-w", container_source_dir])
+
+        wine_compile_arg = f'/compile:"{filename}"'
+        wine_log_arg = f'/log:"{base_name}.log"'
+
         compile_cmd.extend([
             self.docker_container,
             "wine", metaeditor_linux_path,
-            f'/compile:"{wine_source_path}"',
-            f'/log:"{wine_log_path}"',
+            wine_compile_arg,
+            wine_log_arg,
             "/portable"
         ])
         

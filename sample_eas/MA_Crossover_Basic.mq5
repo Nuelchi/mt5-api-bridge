@@ -8,12 +8,6 @@
 #property version   "1.00"
 #property strict
 
-//--- Include necessary libraries
-#include <Trade\Trade.mqh>
-#include <Trade\PositionInfo.mqh>
-#include <Trade\AccountInfo.mqh>
-#include <Trade\SymbolInfo.mqh>
-
 // --- Backwards compatibility for older MT5 builds (ensure filling constants exist)
 #ifndef TRAINFLOW_FILLING_FOK
    #ifdef ORDER_FILLING_FOK
@@ -38,6 +32,12 @@
       #define TRAINFLOW_FILLING_RETURN ((ENUM_ORDER_TYPE_FILLING)2)
    #endif
 #endif
+
+//--- Include necessary libraries
+#include <Trade\Trade.mqh>
+#include <Trade\PositionInfo.mqh>
+#include <Trade\AccountInfo.mqh>
+#include <Trade\SymbolInfo.mqh>
 
 //--- Input parameters
 input group "=== Moving Average Settings ==="

@@ -10,15 +10,15 @@
 
 // --- Backwards compatibility for older MT5 builds (ensure filling constants exist)
 #ifndef ORDER_FILLING_FOK
-   #define ORDER_FILLING_FOK 0
+   #define ORDER_FILLING_FOK ((ENUM_ORDER_TYPE_FILLING)0)
 #endif
 
 #ifndef ORDER_FILLING_IOC
-   #define ORDER_FILLING_IOC 1
+   #define ORDER_FILLING_IOC ((ENUM_ORDER_TYPE_FILLING)1)
 #endif
 
 #ifndef ORDER_FILLING_RETURN
-   #define ORDER_FILLING_RETURN 2
+   #define ORDER_FILLING_RETURN ((ENUM_ORDER_TYPE_FILLING)2)
 #endif
 
 //--- Include necessary libraries

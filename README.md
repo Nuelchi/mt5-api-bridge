@@ -911,9 +911,16 @@ Every trading/market-data endpoint now enforces “active account context” —
 
 ### Database Integration
 
-- Uses the existing `mt5_accounts` table in Supabase
+- Uses the existing `mt5_accounts` table in Supabase (requires extra columns `account_name`, `broker_name`, `account_type`, `encrypted_password`, `risk_limits`, `is_default`, `is_active`)
+- Enforce a unique constraint on `(user_id, login, server)` so upserts can target the correct row:
+  ```sql
+  ALTER TABLE public.mt5_accounts
+      ADD CONSTRAINT mt5_accounts_user_login_server_key
+      UNIQUE (user_id, login, server);
+  ```
 - Passwords are encrypted/decrypted via the backend’s Fernet-based RPC helpers (`encrypt_password` / `decrypt_password`)
-- Each record is scoped to a Supabase user (row-level security enforced)
+- Set `SUPABASE_SERVICE_KEY` (service-role key) on the bridge so writes bypass RLS
+- Each record is scoped to a Supabase user (RLS should still enforce `auth.uid() = user_id` for non-service traffic)
 
 Schema reference:
 ```sql
@@ -938,33 +945,27 @@ Algorithms (or the backend scheduler) call `POST /api/v1/accounts/{account_id}/s
 
 🎯 Result: every Trainflow user can connect multiple demo/live accounts, and Trainflow can trade on their behalf without manual MT5 intervention.
 
-### 🔧 Supabase Requirements (Action Needed)
+### 🔧 Backend Encryption Service (Configure This!)
 
-The bridge relies on Supabase RPC helpers to encrypt/decrypt MT5 credentials before they are stored in `mt5_accounts`. Until these exist, `/api/v1/accounts/connect` will return `{"detail": "Failed to store MT5 account"}` (you’ll see 404s for `rpc/encrypt_password` in the logs).
+The bridge now uses the Trainflow backend to perform all credential encryption/decryption.  
+Configure the following environment variables on the VPS before starting the bridge:
 
-Please provision the following RPCs (or expose equivalent backend endpoints):
-
-```sql
--- Encrypt plaintext password (returns encrypted text)
-create or replace function public.encrypt_password(password text)
-returns text
-security definer
-language sql
-as $$
-  select services.encrypt_password(password);  -- call your Fernet helper
-$$;
-
--- Decrypt encrypted password (returns plaintext)
-create or replace function public.decrypt_password(encrypted text)
-returns text
-security definer
-language sql
-as $$
-  select services.decrypt_password(encrypted); -- call your Fernet helper
-$$;
+```
+TRAINFLOW_BACKEND_URL=https://trainflow-backend-1.onrender.com
+TRAINFLOW_SERVICE_KEY=<same value as backend MT5_ENCRYPTION_SERVICE_KEY>
 ```
 
-Once those RPCs (or the backend integration) are in place, the bridge will persist MT5 accounts in Supabase and the new multi-user endpoints will be fully operational. Until then, users must continue providing MT5 credentials with each request (no credentials are stored).
+On the backend, add the matching key to `.env`:
+
+```
+MT5_ENCRYPTION_SERVICE_KEY=<shared-secret>
+```
+
+With the shared service key in place the bridge securely calls
+`/api/v1/accounts/encrypt` and `/api/v1/accounts/decrypt` to protect MT5
+passwords before writing them to Supabase. No Supabase RPC setup is
+required anymore—all multi-user endpoints work out of the box once the
+service key is configured.
 
 ---
 

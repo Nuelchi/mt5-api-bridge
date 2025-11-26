@@ -911,7 +911,7 @@ Every trading/market-data endpoint now enforces “active account context” —
 
 ### Database Integration
 
-- Uses the existing `mt5_accounts` table in Supabase (requires extra columns `account_name`, `broker_name`, `account_type`, `encrypted_password`, `risk_limits`, `is_default`, `is_active`)
+- Uses the existing `mt5_accounts` table in Supabase (requires extra columns `account_name`, `broker_name`, `account_type`, `encrypted_password`, `password_encrypted` (legacy compatibility), `risk_limits`, `is_default`, `is_active`)
 - Enforce a unique constraint on `(user_id, login, server)` so upserts can target the correct row:
   ```sql
   ALTER TABLE public.mt5_accounts

@@ -120,6 +120,7 @@ def create_or_update_account(user_id: str, payload: AccountConnectRequest) -> Ac
         "broker_name": payload.broker_name,
         "account_type": payload.account_type or "demo",
         "encrypted_password": encrypted_password,
+        "password_encrypted": encrypted_password,
         "is_default": payload.set_as_default,
         "is_active": True,
     }

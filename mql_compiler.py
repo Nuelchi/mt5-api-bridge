@@ -221,10 +221,13 @@ class MQLCompiler:
             except subprocess.CalledProcessError:
                 logger.warning("Could not copy compilation log from container")
             
-            # Read log file
+            # Read log file (MetaEditor writes UTF-16)
             log_content = ""
             if os.path.exists(log_file):
                 try:
+                    with open(log_file, 'r', encoding='utf-16', errors='ignore') as f:
+                        log_content = f.read()
+                except UnicodeError:
                     with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
                         log_content = f.read()
                 except Exception as e:

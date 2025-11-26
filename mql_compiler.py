@@ -43,6 +43,14 @@ class MQLCompiler:
         # Ensure temp directory exists
         os.makedirs(self.compile_temp_dir, exist_ok=True)
     
+    def to_wine_path(self, linux_path: str) -> str:
+        """Convert a Linux path to a Wine-compatible Windows path"""
+        # Ensure absolute path
+        path = os.path.abspath(linux_path)
+        # Wine maps Z: to host root
+        windows_path = "Z:" + path.replace("/", "\\")
+        return windows_path
+    
     def validate_mql_code(self, code: str) -> Tuple[bool, str]:
         """
         Basic validation of MQL5 code
@@ -119,6 +127,8 @@ class MQLCompiler:
         container_source_dir = "/tmp/mql_compile"
         container_source_path = f"{container_source_dir}/{filename}"
         container_log_path = f"{container_source_dir}/{base_name}.log"
+        wine_source_path = self.to_wine_path(container_source_path)
+        wine_log_path = self.to_wine_path(container_log_path)
         
         # Ensure directory exists inside container and copy source file over
         try:
@@ -144,8 +154,8 @@ class MQLCompiler:
         compile_cmd = [
             self.docker_bin, "exec", self.docker_container,
             "wine", f"{self.mt5_terminal_path}/{self.metaeditor_exe}",
-            f'/compile:"{container_source_path}"',
-            f'/log:"{container_log_path}"'
+            f'/compile:"{wine_source_path}"',
+            f'/log:"{wine_log_path}"'
         ]
         
         if validate_only:
@@ -220,7 +230,9 @@ class MQLCompiler:
                 "errors": errors,
                 "warnings": warnings,
                 "compile_time": round(compile_time, 2),
-                "log": log_content[:1000] if log_content else ""  # Truncate log
+                "log": log_content[:1000] if log_content else "",
+                "stdout": result.stdout[:1000] if result.stdout else "",
+                "stderr": result.stderr[:1000] if result.stderr else ""
             }
             
             logger.info(f"Compilation {'successful' if success else 'failed'} "

@@ -9,28 +9,16 @@
 #property strict
 
 // --- Backwards compatibility for older MT5 builds (ensure filling constants exist)
-#ifndef TRAINFLOW_FILLING_FOK
-   #ifdef ORDER_FILLING_FOK
-      #define TRAINFLOW_FILLING_FOK ORDER_FILLING_FOK
-   #else
-      #define TRAINFLOW_FILLING_FOK ((ENUM_ORDER_TYPE_FILLING)0)
-   #endif
+#ifndef ORDER_FILLING_FOK
+   #define ORDER_FILLING_FOK 0
 #endif
 
-#ifndef TRAINFLOW_FILLING_IOC
-   #ifdef ORDER_FILLING_IOC
-      #define TRAINFLOW_FILLING_IOC ORDER_FILLING_IOC
-   #else
-      #define TRAINFLOW_FILLING_IOC ((ENUM_ORDER_TYPE_FILLING)1)
-   #endif
+#ifndef ORDER_FILLING_IOC
+   #define ORDER_FILLING_IOC 1
 #endif
 
-#ifndef TRAINFLOW_FILLING_RETURN
-   #ifdef ORDER_FILLING_RETURN
-      #define TRAINFLOW_FILLING_RETURN ORDER_FILLING_RETURN
-   #else
-      #define TRAINFLOW_FILLING_RETURN ((ENUM_ORDER_TYPE_FILLING)2)
-   #endif
+#ifndef ORDER_FILLING_RETURN
+   #define ORDER_FILLING_RETURN 2
 #endif
 
 //--- Include necessary libraries
@@ -104,13 +92,13 @@ int OnInit()
    //--- Initialize trade object
    trade.SetExpertMagicNumber(MagicNumber);
    trade.SetDeviationInPoints(Deviation);
-   trade.SetTypeFilling(TRAINFLOW_FILLING_FOK);
+   trade.SetTypeFilling((ENUM_ORDER_TYPE_FILLING)ORDER_FILLING_FOK);
    trade.SetAsyncMode(false);
    
    //--- Check if FOK is not available, try IOC
-   if(!symbolInfo.IsFillTypeAllowed(TRAINFLOW_FILLING_FOK))
+   if(!symbolInfo.IsFillTypeAllowed((ENUM_ORDER_TYPE_FILLING)ORDER_FILLING_FOK))
    {
-      trade.SetTypeFilling(TRAINFLOW_FILLING_IOC);
+      trade.SetTypeFilling((ENUM_ORDER_TYPE_FILLING)ORDER_FILLING_IOC);
    }
    
    //--- Create Fast MA indicator

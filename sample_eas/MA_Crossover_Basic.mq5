@@ -8,24 +8,30 @@
 #property version   "1.00"
 #property strict
 
-// --- Backwards compatibility for older MT5 builds (ensure filling constants exist)
-#ifndef ORDER_FILLING_FOK
-#define ORDER_FILLING_FOK 0
-#endif
-
-#ifndef ORDER_FILLING_IOC
-#define ORDER_FILLING_IOC 1
-#endif
-
-#ifndef ORDER_FILLING_RETURN
-#define ORDER_FILLING_RETURN 2
-#endif
-
 //--- Include necessary libraries
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
 #include <Trade\AccountInfo.mqh>
 #include <Trade\SymbolInfo.mqh>
+
+// --- Backwards compatibility for older MT5 builds (ensure filling constants exist)
+#ifdef ORDER_FILLING_FOK
+const int FILLING_MODE_FOK = ORDER_FILLING_FOK;
+#else
+const int FILLING_MODE_FOK = 0;
+#endif
+
+#ifdef ORDER_FILLING_IOC
+const int FILLING_MODE_IOC = ORDER_FILLING_IOC;
+#else
+const int FILLING_MODE_IOC = 1;
+#endif
+
+#ifdef ORDER_FILLING_RETURN
+const int FILLING_MODE_RETURN = ORDER_FILLING_RETURN;
+#else
+const int FILLING_MODE_RETURN = 2;
+#endif
 
 //--- Input parameters
 input group "=== Moving Average Settings ==="
@@ -92,13 +98,13 @@ int OnInit()
    //--- Initialize trade object
    trade.SetExpertMagicNumber(MagicNumber);
    trade.SetDeviationInPoints(Deviation);
-   trade.SetTypeFilling(ORDER_FILLING_FOK);
+   trade.SetTypeFilling(FILLING_MODE_FOK);
    trade.SetAsyncMode(false);
    
    //--- Check if FOK is not available, try IOC
-   if(!symbolInfo.IsFillTypeAllowed(ORDER_FILLING_FOK))
+   if(!symbolInfo.IsFillTypeAllowed(FILLING_MODE_FOK))
    {
-      trade.SetTypeFilling(ORDER_FILLING_IOC);
+      trade.SetTypeFilling(FILLING_MODE_IOC);
    }
    
    //--- Create Fast MA indicator

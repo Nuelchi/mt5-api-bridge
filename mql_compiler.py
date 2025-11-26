@@ -171,8 +171,15 @@ class MQLCompiler:
         compile_cmd = [self.docker_bin, "exec"]
         if self.docker_wine_user:
             compile_cmd.extend(["-u", self.docker_wine_user])
-        if self.wine_prefix:
-            compile_cmd.extend(["-e", f"WINEPREFIX={self.wine_prefix}"])
+        env_vars = {
+            "DISPLAY": os.getenv("DOCKER_WINE_DISPLAY", ":99"),
+            "WINEPREFIX": self.wine_prefix,
+            "WINEDLLOVERRIDES": os.getenv("DOCKER_WINE_DLL", "mscoree,mshtml="),
+            "WINEDEBUG": os.getenv("DOCKER_WINE_DEBUG", "-all"),
+        }
+        for key, value in env_vars.items():
+            if value:
+                compile_cmd.extend(["-e", f"{key}={value}"])
         
         metaeditor_linux_path = (
             f"{self.wine_prefix}/drive_c/Program Files/MetaTrader 5/{self.metaeditor_exe}"
@@ -180,7 +187,7 @@ class MQLCompiler:
         
         compile_cmd.extend([
             self.docker_container,
-            "wine", self.to_wine_path(metaeditor_linux_path),
+            "wine", metaeditor_linux_path,
             f'/compile:"{wine_source_path}"',
             f'/log:"{wine_log_path}"'
         ])

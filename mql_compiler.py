@@ -148,13 +148,6 @@ class MQLCompiler:
             f'/log:"{container_log_path}"'
         ]
         
-        compile_cmd = [
-            self.docker_bin, "exec", self.docker_container,
-            "wine", f"{self.mt5_terminal_path}/{self.metaeditor_exe}",
-            f'/compile:"{docker_source_path}"',
-            f'/log:"{docker_log_path}"'
-        ]
-        
         if validate_only:
             compile_cmd.append('/s')  # Syntax check only
         

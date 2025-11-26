@@ -180,7 +180,7 @@ class MQLCompiler:
         
         compile_cmd.extend([
             self.docker_container,
-            "wine", metaeditor_linux_path,
+            "wine", self.to_wine_path(metaeditor_linux_path),
             f'/compile:"{wine_source_path}"',
             f'/log:"{wine_log_path}"'
         ])

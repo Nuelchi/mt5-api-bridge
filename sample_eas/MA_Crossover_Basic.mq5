@@ -9,17 +9,9 @@
 #property strict
 
 // --- Backwards compatibility for older MT5 builds (ensure filling constants exist)
-#ifndef ORDER_FILLING_FOK
-   #define ORDER_FILLING_FOK ((ENUM_ORDER_TYPE_FILLING)0)
-#endif
-
-#ifndef ORDER_FILLING_IOC
-   #define ORDER_FILLING_IOC ((ENUM_ORDER_TYPE_FILLING)1)
-#endif
-
-#ifndef ORDER_FILLING_RETURN
-   #define ORDER_FILLING_RETURN ((ENUM_ORDER_TYPE_FILLING)2)
-#endif
+const ENUM_ORDER_TYPE_FILLING TF_FILLING_FOK = (ENUM_ORDER_TYPE_FILLING)0;
+const ENUM_ORDER_TYPE_FILLING TF_FILLING_IOC = (ENUM_ORDER_TYPE_FILLING)1;
+const ENUM_ORDER_TYPE_FILLING TF_FILLING_RETURN = (ENUM_ORDER_TYPE_FILLING)2;
 
 //--- Include necessary libraries
 #include <Trade\Trade.mqh>
@@ -92,13 +84,13 @@ int OnInit()
    //--- Initialize trade object
    trade.SetExpertMagicNumber(MagicNumber);
    trade.SetDeviationInPoints(Deviation);
-   trade.SetTypeFilling((ENUM_ORDER_TYPE_FILLING)ORDER_FILLING_FOK);
+   trade.SetTypeFilling(TF_FILLING_FOK);
    trade.SetAsyncMode(false);
    
    //--- Check if FOK is not available, try IOC
-   if(!symbolInfo.IsFillTypeAllowed((ENUM_ORDER_TYPE_FILLING)ORDER_FILLING_FOK))
+   if(!symbolInfo.IsFillTypeAllowed(TF_FILLING_FOK))
    {
-      trade.SetTypeFilling((ENUM_ORDER_TYPE_FILLING)ORDER_FILLING_IOC);
+      trade.SetTypeFilling(TF_FILLING_IOC);
    }
    
    //--- Create Fast MA indicator

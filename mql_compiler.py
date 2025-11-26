@@ -8,6 +8,7 @@ import os
 import subprocess
 import time
 import re
+import shutil
 from pathlib import Path
 from typing import Dict, Tuple, Optional
 import logging
@@ -25,6 +26,19 @@ class MQLCompiler:
         self.metaeditor_exe = "MetaEditor64.exe"
         self.experts_path = f"{self.mt5_terminal_path}/MQL5/Experts"
         self.compile_temp_dir = "/tmp/mql_compile"
+        
+        # Resolve docker binary location (systemd PATH might not include /usr/bin)
+        self.docker_bin = (
+            os.getenv("DOCKER_BIN")
+            or shutil.which("docker")
+            or "/usr/bin/docker"
+        )
+        
+        if not shutil.which(self.docker_bin) and not os.path.exists(self.docker_bin):
+            logger.warning(
+                f"Docker binary not found at {self.docker_bin}. "
+                "Set DOCKER_BIN env var if docker is installed elsewhere."
+            )
         
         # Ensure temp directory exists
         os.makedirs(self.compile_temp_dir, exist_ok=True)
@@ -108,7 +122,7 @@ class MQLCompiler:
         docker_log_path = f"/tmp/mql_compile/{Path(filename).stem}.log"
         
         compile_cmd = [
-            "docker", "exec", self.docker_container,
+            self.docker_bin, "exec", self.docker_container,
             "wine", f"{self.mt5_terminal_path}/{self.metaeditor_exe}",
             f'/compile:"{docker_source_path}"',
             f'/log:"{docker_log_path}"'
@@ -252,7 +266,7 @@ class MQLCompiler:
         try:
             # Create user folder in Docker
             subprocess.run(
-                ["docker", "exec", self.docker_container, 
+                [self.docker_bin, "exec", self.docker_container, 
                  "mkdir", "-p", dest_dir],
                 check=True,
                 capture_output=True
@@ -260,7 +274,7 @@ class MQLCompiler:
             
             # Copy file into Docker container
             subprocess.run(
-                ["docker", "cp", compiled_file, 
+                [self.docker_bin, "cp", compiled_file, 
                  f"{self.docker_container}:{dest_file}"],
                 check=True,
                 capture_output=True
@@ -293,4 +307,5 @@ class MQLCompiler:
 
 # Global compiler instance
 compiler = MQLCompiler()
+
 

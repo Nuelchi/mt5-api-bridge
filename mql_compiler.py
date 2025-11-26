@@ -189,7 +189,8 @@ class MQLCompiler:
             self.docker_container,
             "wine", metaeditor_linux_path,
             f'/compile:"{wine_source_path}"',
-            f'/log:"{wine_log_path}"'
+            f'/log:"{wine_log_path}"',
+            "/portable"
         ])
         
         if validate_only:

@@ -33,6 +33,8 @@ class MQLCompiler:
             or shutil.which("docker")
             or "/usr/bin/docker"
         )
+        self.docker_wine_user = os.getenv("DOCKER_WINE_USER", "abc")
+        self.wine_prefix = os.getenv("DOCKER_WINE_PREFIX", "/config/.wine")
         
         if not shutil.which(self.docker_bin) and not os.path.exists(self.docker_bin):
             logger.warning(
@@ -138,6 +140,12 @@ class MQLCompiler:
                 check=True,
                 capture_output=True
             )
+            subprocess.run(
+                [self.docker_bin, "exec", self.docker_container,
+                 "chmod", "777", container_source_dir],
+                check=True,
+                capture_output=True
+            )
             
             subprocess.run(
                 [self.docker_bin, "cp", source_file,
@@ -145,18 +153,33 @@ class MQLCompiler:
                 check=True,
                 capture_output=True
             )
+            
+            if self.docker_wine_user:
+                subprocess.run(
+                    [self.docker_bin, "exec", self.docker_container,
+                     "chown", f"{self.docker_wine_user}:{self.docker_wine_user}",
+                     container_source_path],
+                    check=True,
+                    capture_output=True
+                )
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to copy source into container: {e}")
             return False, {"error": f"Failed to prepare container for compilation: {e}"}
         
         # Build Docker exec command to compile inside container
         # MetaEditor will read/write from /tmp/mql_compile
-        compile_cmd = [
-            self.docker_bin, "exec", self.docker_container,
+        compile_cmd = [self.docker_bin, "exec"]
+        if self.docker_wine_user:
+            compile_cmd.extend(["-u", self.docker_wine_user])
+        if self.wine_prefix:
+            compile_cmd.extend(["-e", f"WINEPREFIX={self.wine_prefix}"])
+        
+        compile_cmd.extend([
+            self.docker_container,
             "wine", f"{self.mt5_terminal_path}/{self.metaeditor_exe}",
             f'/compile:"{wine_source_path}"',
             f'/log:"{wine_log_path}"'
-        ]
+        ])
         
         if validate_only:
             compile_cmd.append('/s')  # Syntax check only

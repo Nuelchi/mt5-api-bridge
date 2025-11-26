@@ -174,9 +174,13 @@ class MQLCompiler:
         if self.wine_prefix:
             compile_cmd.extend(["-e", f"WINEPREFIX={self.wine_prefix}"])
         
+        metaeditor_linux_path = (
+            f"{self.wine_prefix}/drive_c/Program Files/MetaTrader 5/{self.metaeditor_exe}"
+        )
+        
         compile_cmd.extend([
             self.docker_container,
-            "wine", f"{self.mt5_terminal_path}/{self.metaeditor_exe}",
+            "wine", metaeditor_linux_path,
             f'/compile:"{wine_source_path}"',
             f'/log:"{wine_log_path}"'
         ])

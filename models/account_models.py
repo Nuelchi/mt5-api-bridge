@@ -8,7 +8,7 @@ class AccountBase(BaseModel):
     account_name: Optional[str] = Field(None, max_length=255)
     broker_name: Optional[str] = Field(None, max_length=100)
     account_type: Optional[str] = Field(
-        None, regex="^(demo|live)$", description="demo or live"
+        None, pattern="^(demo|live)$", description="demo or live"
     )
     risk_limits: Optional[dict] = None
 

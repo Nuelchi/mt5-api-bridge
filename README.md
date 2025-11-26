@@ -892,36 +892,30 @@ python3 test_login_and_trading.py
 
 ---
 
-## 🔮 Multi-User Account System (Coming Soon)
+## 🔮 Multi-User Account System
 
-The API bridge is designed to support **multiple MT5 accounts per user** and **algorithmic trading** for your users.
+The bridge now supports **multiple MT5 accounts per Supabase user** plus account-specific switching for algorithmic execution. Trainflow’s backend still owns encryption (credentials are encrypted via the existing `encrypt_password`/`decrypt_password` RPCs), and the bridge consumes the decrypted data only at login time.
 
-### Planned Features
+### Account Endpoints (FastAPI)
 
-1. **Multiple MT5 Accounts per User**
-   - Users can connect multiple MT5 broker accounts
-   - Secure credential storage (encrypted passwords)
-   - Easy account switching
-   - Portfolio view across all accounts
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/api/v1/accounts/connect` | Verify MT5 credentials, store them in Supabase, set default account |
+| `GET` | `/api/v1/accounts` | List the caller’s MT5 accounts |
+| `GET` | `/api/v1/accounts/current` | Return the active MT5 account (auto-switches if needed) |
+| `POST` | `/api/v1/accounts/{account_id}/switch` | Programmatically log into a specific account |
+| `PUT` | `/api/v1/accounts/{account_id}` | Update metadata or risk limits |
+| `DELETE` | `/api/v1/accounts/{account_id}` | Soft-delete (deactivate) an account |
 
-2. **Algorithmic Trading Support**
-   - Users can deploy trading algorithms to their MT5 accounts
-   - Algorithm marketplace integration
-   - Automated strategy execution
-   - Performance tracking per algorithm
+Every trading/market-data endpoint now enforces “active account context” — the bridge automatically switches the MT5 terminal to the right login before executing a request. Because MT5 allows only one session at a time, sessions are serialized with a global lock; account switching takes ~1–2 seconds.
 
-3. **Database Integration**
-   - Uses existing `mt5_accounts` table in Supabase
-   - Stores encrypted MT5 credentials
-   - Links accounts to Supabase users
+### Database Integration
 
-### Implementation Status
+- Uses the existing `mt5_accounts` table in Supabase
+- Passwords are encrypted/decrypted via the backend’s Fernet-based RPC helpers (`encrypt_password` / `decrypt_password`)
+- Each record is scoped to a Supabase user (row-level security enforced)
 
-📁 **Documentation Available:**
-- `MULTI_USER_ACCOUNT_SYSTEM.md` - Complete architecture design
-- `IMPLEMENTATION_PLAN.md` - Step-by-step implementation guide
-
-🔐 **Database Schema Ready:**
+Schema reference:
 ```sql
 -- mt5_accounts table (already exists in your backend)
 CREATE TABLE mt5_accounts (
@@ -938,20 +932,11 @@ CREATE TABLE mt5_accounts (
 );
 ```
 
-⏳ **Implementation Timeline:**
-- Core system is ready and fully tested
-- Multi-user features can be implemented when needed
-- Estimated time: 2-3 days for full implementation
-- No changes required to current working system
+### Algorithm Execution
 
-### Why Not Implemented Yet?
+Algorithms (or the backend scheduler) call `POST /api/v1/accounts/{account_id}/switch` before placing trades. Once switched, the standard trading endpoints (`/api/v1/trades`, `/api/v1/positions`, etc.) operate against that user’s account until another switch occurs. The bridge exposes hooks for future features (e.g., `/api/v1/algorithms/execute`) in `MULTI_USER_ACCOUNT_SYSTEM.md`.
 
-The current setup works perfectly for a **single MT5 account** (demo or live). The multi-user system is a separate feature that will be implemented when you're ready to:
-1. Allow users to connect their own MT5 accounts
-2. Deploy trading algorithms to user accounts
-3. Scale to multiple users trading simultaneously
-
-For now, you have a **production-ready API bridge** that handles all MT5 operations securely and reliably! 🎉
+🎯 Result: every Trainflow user can connect multiple demo/live accounts, and Trainflow can trade on their behalf without manual MT5 intervention.
 
 ---
 

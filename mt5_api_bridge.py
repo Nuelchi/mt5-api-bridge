@@ -17,7 +17,17 @@ import jwt
 import time
 
 # Supabase authentication (same as backend)
-from supabase import create_client, Client
+from supabase import Client
+
+from database.supabase_client import get_supabase_client, is_supabase_available
+from models.account_models import (
+    AccountConnectRequest,
+    AccountListResponse,
+    AccountResponse,
+    AccountUpdateRequest,
+    SwitchAccountResponse,
+)
+from services import account_manager, account_switcher
 
 # Try to import MT5 library
 MT5_INSTANCE = None
@@ -45,19 +55,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
-
-# Initialize Supabase client (same as backend)
-try:
-    supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-    SUPABASE_AVAILABLE = True
-    logger.info("✅ Supabase client initialized successfully")
-except Exception as e:
-    logger.warning(f"⚠️  Supabase client initialization failed: {e}")
-    supabase_client = None
-    SUPABASE_AVAILABLE = False
+supabase_client: Optional[Client] = get_supabase_client()
+SUPABASE_AVAILABLE = is_supabase_available()
 
 app = FastAPI(
     title="MT5 API Bridge",
@@ -182,11 +181,6 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
 
 # ============ MODELS ============
 
-class ConnectRequest(BaseModel):
-    login: int
-    password: str
-    server: str
-
 class TradeRequest(BaseModel):
     symbol: str
     order_type: str  # "buy" or "sell"
@@ -302,6 +296,33 @@ def get_mt5_const(name):
         return getattr(mt5_module, name, None)
     return None
 
+
+def _require_account(user_id: str, account_id: Optional[str] = None) -> AccountResponse:
+    """
+    Fetch the requested account for a user, defaulting to the cached
+    active account or the user's default account.
+    """
+    if account_id:
+        return account_manager.get_account(user_id, account_id)
+
+    cached_id = account_switcher.get_active_account_id(user_id)
+    if cached_id:
+        return account_manager.get_account(user_id, cached_id)
+
+    default_account = account_manager.get_default_account(user_id)
+    if default_account:
+        return default_account
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="No MT5 account connected. Use /api/v1/accounts/connect first.",
+    )
+
+
+def _ensure_account_session(user_id: str, account: AccountResponse, mt5_instance=None):
+    mt5_instance = mt5_instance or get_mt5()
+    account_switcher.ensure_account_session(user_id, account.dict(), mt5_instance)
+
 # ============ HEALTH & INFO ============
 
 @app.get("/")
@@ -352,68 +373,74 @@ async def health_check():
 
 # ============ ACCOUNT ENDPOINTS ============
 
-@app.post("/api/v1/accounts/connect")
+@app.post("/api/v1/accounts/connect", response_model=AccountResponse)
 async def connect_account(
-    request: ConnectRequest,
-    user: dict = Depends(verify_token)
+    request: AccountConnectRequest,
+    user: dict = Depends(verify_token),
 ):
-    """Connect to MT5 account
-    
-    Note: For mt5linux, MT5 Terminal must already be logged in.
-    This endpoint verifies the connection and returns account info.
+    """
+    Connect (or add) an MT5 account for the authenticated user.
+    Verifies the credentials against MT5, stores them in Supabase
+    (with backend-managed encryption), and sets the account as active.
     """
     mt5 = get_mt5()
-    
+    user_id = user["user_id"]
+
+    if not hasattr(mt5, "login"):
+        raise HTTPException(
+            status_code=503,
+            detail="MT5 library does not allow programmatic login on this platform",
+        )
+
     try:
-        # For mt5linux, login is done in MT5 Terminal, not via API
-        # Just verify connection and get account info
-        account_info = mt5.account_info()
-        
-        if account_info is None:
+        try:
+            login_id = int(request.login)
+        except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail="Not connected to MT5. Please log in to MT5 Terminal first."
+                detail="MT5 login must be numeric for automation. Please verify account number.",
             )
-        
-        # Verify login matches (if mt5linux supports login method)
-        if hasattr(mt5, 'login'):
-            # Windows MetaTrader5 library - can login programmatically
-            authorized = mt5.login(
-                request.login,
-                password=request.password,
-                server=request.server
+
+        authorized = mt5.login(
+            login_id,
+            password=request.password,
+            server=request.server,
+        )
+        if not authorized:
+            error = mt5.last_error() if hasattr(mt5, "last_error") else "Login failed"
+            raise HTTPException(status_code=400, detail=f"Login failed: {error}")
+
+        account_info = mt5.account_info()
+        if not account_info:
+            raise HTTPException(
+                status_code=503,
+                detail="Connected to MT5 but account information is unavailable",
             )
-            
-            if not authorized:
-                error = mt5.last_error() if hasattr(mt5, 'last_error') else "Login failed"
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Login failed: {error}"
-                )
-            account_info = mt5.account_info()
-        
-        return {
-            "success": True,
-            "account": {
-                "login": account_info.login,
+
+        account = account_manager.create_or_update_account(user_id, request)
+        # refresh session cache
+        _ensure_account_session(user_id, account, mt5_instance=mt5)
+
+        # enrich response with latest balances
+        enriched = account.copy(
+            update={
                 "balance": float(account_info.balance),
                 "equity": float(account_info.equity),
-                "margin": float(account_info.margin),
-                "free_margin": float(account_info.margin_free),
-                "server": account_info.server,
-                "currency": account_info.currency
             }
-        }
+        )
+        return enriched
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Connection error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.error("Connection error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 @app.get("/api/v1/account/info")
 async def get_account_info(user: dict = Depends(verify_token)):
     """Get account information"""
     mt5 = get_mt5()
+    account = _require_account(user["user_id"])
+    _ensure_account_session(user["user_id"], account, mt5)
     
     try:
         account_info = mt5.account_info()
@@ -439,6 +466,61 @@ async def get_account_info(user: dict = Depends(verify_token)):
         logger.error(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/v1/accounts", response_model=AccountListResponse)
+async def list_accounts_endpoint(user: dict = Depends(verify_token)):
+    accounts = account_manager.list_accounts(user["user_id"])
+    return AccountListResponse(accounts=accounts)
+
+
+@app.get("/api/v1/accounts/current", response_model=AccountResponse)
+async def get_current_account(user: dict = Depends(verify_token)):
+    account = _require_account(user["user_id"])
+    mt5 = get_mt5()
+    _ensure_account_session(user["user_id"], account, mt5)
+    info = mt5.account_info()
+    if info:
+        account = account.copy(
+            update={
+                "balance": float(info.balance),
+                "equity": float(info.equity),
+            }
+        )
+    return account
+
+
+@app.post("/api/v1/accounts/{account_id}/switch", response_model=SwitchAccountResponse)
+async def switch_account(account_id: str, user: dict = Depends(verify_token)):
+    account = account_manager.get_account(user["user_id"], account_id)
+    mt5 = get_mt5()
+    _ensure_account_session(user["user_id"], account, mt5)
+    info = mt5.account_info()
+    if info:
+        account = account.copy(
+            update={
+                "balance": float(info.balance),
+                "equity": float(info.equity),
+            }
+        )
+    return SwitchAccountResponse(success=True, account=account)
+
+
+@app.put("/api/v1/accounts/{account_id}", response_model=AccountResponse)
+async def update_account_endpoint(
+    account_id: str,
+    request: AccountUpdateRequest,
+    user: dict = Depends(verify_token),
+):
+    account = account_manager.update_account(user["user_id"], account_id, request)
+    return account
+
+
+@app.delete("/api/v1/accounts/{account_id}")
+async def delete_account_endpoint(account_id: str, user: dict = Depends(verify_token)):
+    account_manager.delete_account(user["user_id"], account_id)
+    account_switcher.clear_account_cache(account_id)
+    return {"success": True}
+
 # ============ MARKET DATA ENDPOINTS ============
 
 @app.get("/api/v1/market-data/{symbol}")
@@ -450,6 +532,8 @@ async def get_historical_data(
 ):
     """Get historical market data"""
     mt5 = get_mt5()
+    account = _require_account(user["user_id"])
+    _ensure_account_session(user["user_id"], account, mt5)
     
     try:
         # Map timeframe - get constants from MT5
@@ -507,6 +591,8 @@ async def get_data_range(
 ):
     """Get historical data for date range"""
     mt5 = get_mt5()
+    account = _require_account(user["user_id"])
+    _ensure_account_session(user["user_id"], account, mt5)
     
     try:
         timeframe_map = {
@@ -574,6 +660,8 @@ async def place_order(
 ):
     """Place a market order"""
     mt5 = get_mt5()
+    account = _require_account(user["user_id"])
+    _ensure_account_session(user["user_id"], account, mt5)
     
     try:
         # Get symbol info
@@ -722,6 +810,8 @@ async def place_order(
 async def get_positions(user: dict = Depends(verify_token)):
     """Get all open positions"""
     mt5 = get_mt5()
+    account = _require_account(user["user_id"])
+    _ensure_account_session(user["user_id"], account, mt5)
     
     try:
         positions = mt5.positions_get()
@@ -752,6 +842,8 @@ async def get_positions(user: dict = Depends(verify_token)):
 async def close_position(ticket: int, user: dict = Depends(verify_token)):
     """Close a position"""
     mt5 = get_mt5()
+    account = _require_account(user["user_id"])
+    _ensure_account_session(user["user_id"], account, mt5)
     
     try:
         position = mt5.positions_get(ticket=ticket)
@@ -883,6 +975,8 @@ async def close_position(ticket: int, user: dict = Depends(verify_token)):
 async def get_symbols(user: dict = Depends(verify_token)):
     """Get all available symbols"""
     mt5 = get_mt5()
+    account = _require_account(user["user_id"])
+    _ensure_account_session(user["user_id"], account, mt5)
     
     try:
         symbols = mt5.symbols_get()

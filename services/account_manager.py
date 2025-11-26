@@ -7,8 +7,10 @@ invokes those RPCs and never implements crypto locally.
 """
 
 import logging
+import os
 from typing import Any, Dict, Optional
 
+import httpx
 from fastapi import HTTPException, status
 
 from database.supabase_client import get_supabase_client
@@ -23,6 +25,9 @@ logger = logging.getLogger(__name__)
 MT5_ACCOUNTS_TABLE = "mt5_accounts"
 ENCRYPT_RPC = "encrypt_password"
 DECRYPT_RPC = "decrypt_password"
+
+BACKEND_API_BASE = os.getenv("TRAINFLOW_BACKEND_URL", "").rstrip("/")
+ENCRYPTION_SERVICE_KEY = os.getenv("TRAINFLOW_SERVICE_KEY")
 
 
 def _require_supabase():
@@ -45,18 +50,54 @@ def _run_rpc(function: str, payload: Dict[str, Any]) -> Optional[str]:
         return None
 
 
+def _call_encryption_service(path: str, payload: Dict[str, Any]) -> Optional[str]:
+    if not BACKEND_API_BASE or not ENCRYPTION_SERVICE_KEY:
+        return None
+    url = f"{BACKEND_API_BASE}/api/v1/accounts/{path}"
+    try:
+        response = httpx.post(
+            url,
+            json=payload,
+            headers={"X-Service-Key": ENCRYPTION_SERVICE_KEY},
+            timeout=10.0,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("encrypted") if path == "encrypt" else data.get("password")
+        logger.warning("Encryption service responded with %s: %s", response.status_code, response.text)
+    except Exception as exc:
+        logger.warning("Encryption service request failed: %s", exc)
+    return None
+
+
 def encrypt_password(password: str) -> str:
     if not password:
-        return password
+        raise HTTPException(status_code=400, detail="Password is required")
+
+    encrypted = _call_encryption_service("encrypt", {"password": password})
+    if encrypted:
+        return encrypted
+
     encrypted = _run_rpc(ENCRYPT_RPC, {"password": password})
-    return encrypted or password
+    if encrypted:
+        return encrypted
+
+    raise HTTPException(status_code=500, detail="Failed to encrypt MT5 password")
 
 
 def decrypt_password(encrypted: str) -> str:
     if not encrypted:
-        return encrypted
+        raise HTTPException(status_code=400, detail="Encrypted value is required")
+
+    decrypted = _call_encryption_service("decrypt", {"encrypted": encrypted})
+    if decrypted:
+        return decrypted
+
     decrypted = _run_rpc(DECRYPT_RPC, {"encrypted": encrypted})
-    return decrypted or encrypted
+    if decrypted:
+        return decrypted
+
+    raise HTTPException(status_code=500, detail="Failed to decrypt MT5 password")
 
 
 def _map_account(row: Dict[str, Any]) -> AccountResponse:
@@ -86,9 +127,14 @@ def create_or_update_account(user_id: str, payload: AccountConnectRequest) -> Ac
         data["risk_limits"] = payload.risk_limits
 
     try:
-        response = (
+        (
             client.table(MT5_ACCOUNTS_TABLE)
             .upsert(data, on_conflict="user_id,login,server")
+            .execute()
+        )
+
+        response = (
+            client.table(MT5_ACCOUNTS_TABLE)
             .select("*")
             .eq("user_id", user_id)
             .eq("login", payload.login)

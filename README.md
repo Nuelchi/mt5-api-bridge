@@ -938,6 +938,34 @@ Algorithms (or the backend scheduler) call `POST /api/v1/accounts/{account_id}/s
 
 🎯 Result: every Trainflow user can connect multiple demo/live accounts, and Trainflow can trade on their behalf without manual MT5 intervention.
 
+### 🔧 Supabase Requirements (Action Needed)
+
+The bridge relies on Supabase RPC helpers to encrypt/decrypt MT5 credentials before they are stored in `mt5_accounts`. Until these exist, `/api/v1/accounts/connect` will return `{"detail": "Failed to store MT5 account"}` (you’ll see 404s for `rpc/encrypt_password` in the logs).
+
+Please provision the following RPCs (or expose equivalent backend endpoints):
+
+```sql
+-- Encrypt plaintext password (returns encrypted text)
+create or replace function public.encrypt_password(password text)
+returns text
+security definer
+language sql
+as $$
+  select services.encrypt_password(password);  -- call your Fernet helper
+$$;
+
+-- Decrypt encrypted password (returns plaintext)
+create or replace function public.decrypt_password(encrypted text)
+returns text
+security definer
+language sql
+as $$
+  select services.decrypt_password(encrypted); -- call your Fernet helper
+$$;
+```
+
+Once those RPCs (or the backend integration) are in place, the bridge will persist MT5 accounts in Supabase and the new multi-user endpoints will be fully operational. Until then, users must continue providing MT5 credentials with each request (no credentials are stored).
+
 ---
 
 ## 📚 Additional Resources

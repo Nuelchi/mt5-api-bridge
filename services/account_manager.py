@@ -43,18 +43,31 @@ def _require_supabase():
 def _run_rpc(function: str, payload: Dict[str, Any]) -> Optional[str]:
     client = _require_supabase()
     try:
+        logger.debug("Calling Supabase RPC: %s with payload keys: %s", function, list(payload.keys()))
         response = client.rpc(function, payload).execute()
-        return response.data
+        if response.data:
+            logger.debug("RPC %s returned data", function)
+            return response.data
+        else:
+            logger.warning("RPC %s returned no data", function)
+            return None
     except Exception as exc:
-        logger.warning("RPC %s failed: %s", function, exc)
+        error_str = str(exc)
+        if "404" in error_str or "not found" in error_str.lower():
+            logger.error("RPC %s does not exist in Supabase. Please create this function in your database.", function)
+        else:
+            logger.error("RPC %s failed: %s", function, exc, exc_info=True)
         return None
 
 
 def _call_encryption_service(path: str, payload: Dict[str, Any]) -> Optional[str]:
     if not BACKEND_API_BASE or not ENCRYPTION_SERVICE_KEY:
+        logger.debug("Encryption service not configured: BACKEND_API_BASE=%s, ENCRYPTION_SERVICE_KEY=%s", 
+                    bool(BACKEND_API_BASE), bool(ENCRYPTION_SERVICE_KEY))
         return None
     url = f"{BACKEND_API_BASE}/api/v1/accounts/{path}"
     try:
+        logger.debug("Calling encryption service: %s", url)
         response = httpx.post(
             url,
             json=payload,
@@ -63,10 +76,20 @@ def _call_encryption_service(path: str, payload: Dict[str, Any]) -> Optional[str
         )
         if response.status_code == 200:
             data = response.json()
-            return data.get("encrypted") if path == "encrypt" else data.get("password")
-        logger.warning("Encryption service responded with %s: %s", response.status_code, response.text)
+            result = data.get("encrypted") if path == "encrypt" else data.get("password")
+            if result:
+                logger.debug("Encryption service returned result")
+                return result
+            else:
+                logger.warning("Encryption service returned 200 but no result in response: %s", data)
+        else:
+            logger.warning("Encryption service responded with %s: %s", response.status_code, response.text[:500])
+    except httpx.TimeoutException:
+        logger.error("Encryption service request timed out after 10s: %s", url)
+    except httpx.ConnectError as exc:
+        logger.error("Encryption service connection failed: %s - Is the backend running at %s?", exc, BACKEND_API_BASE)
     except Exception as exc:
-        logger.warning("Encryption service request failed: %s", exc)
+        logger.error("Encryption service request failed: %s", exc, exc_info=True)
     return None
 
 
@@ -89,15 +112,32 @@ def decrypt_password(encrypted: str) -> str:
     if not encrypted:
         raise HTTPException(status_code=400, detail="Encrypted value is required")
 
-    decrypted = _call_encryption_service("decrypt", {"encrypted": encrypted})
-    if decrypted:
-        return decrypted
+    # Try backend encryption service first
+    if BACKEND_API_BASE and ENCRYPTION_SERVICE_KEY:
+        logger.info(f"Attempting to decrypt via backend service: {BACKEND_API_BASE}")
+        decrypted = _call_encryption_service("decrypt", {"encrypted": encrypted})
+        if decrypted:
+            logger.info("Successfully decrypted via backend service")
+            return decrypted
+        logger.warning("Backend encryption service failed or returned no result")
+    else:
+        logger.warning(f"Backend encryption service not configured: BACKEND_API_BASE={bool(BACKEND_API_BASE)}, ENCRYPTION_SERVICE_KEY={'***' if ENCRYPTION_SERVICE_KEY else 'NOT SET'}")
 
+    # Fallback to Supabase RPC
+    logger.info("Attempting to decrypt via Supabase RPC")
     decrypted = _run_rpc(DECRYPT_RPC, {"encrypted": encrypted})
     if decrypted:
+        logger.info("Successfully decrypted via Supabase RPC")
         return decrypted
+    logger.warning("Supabase RPC decrypt_password failed or returned no result")
 
-    raise HTTPException(status_code=500, detail="Failed to decrypt MT5 password")
+    # Both methods failed - provide helpful error
+    error_detail = "Failed to decrypt MT5 password. "
+    if not BACKEND_API_BASE or not ENCRYPTION_SERVICE_KEY:
+        error_detail += "Backend encryption service not configured (TRAINFLOW_BACKEND_URL or TRAINFLOW_SERVICE_KEY missing). "
+    error_detail += "Please ensure the backend encryption service is running and accessible, or that Supabase RPC 'decrypt_password' is available."
+    
+    raise HTTPException(status_code=500, detail=error_detail)
 
 
 def _map_account(row: Dict[str, Any]) -> AccountResponse:

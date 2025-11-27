@@ -5,7 +5,7 @@ Web API for MT5 trading and data access on Linux VPS
 Uses Supabase JWT authentication (same as Trainflow backend)
 """
 
-from fastapi import FastAPI, Depends, HTTPException, Query, status
+from fastapi import FastAPI, Depends, HTTPException, Query, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -28,6 +28,7 @@ from models.account_models import (
     SwitchAccountResponse,
 )
 from services import account_manager, account_switcher
+from services.trade_journal_logger import log_closed_position_to_journal
 
 # Try to import MT5 library
 MT5_INSTANCE = None
@@ -689,6 +690,7 @@ async def place_order(
         ORDER_FILLING_IOC = 1
         ORDER_FILLING_RETURN = 2
         TRADE_RETCODE_DONE = 10009
+        TRADE_RETCODE_AUTOTRADING_DISABLED = 10027
         
         # Determine filling mode from symbol info
         # filling_mode is a bitmask - check which modes are supported
@@ -770,6 +772,13 @@ async def place_order(
                     logger.info(f"Order succeeded with filling_mode={try_filling_mode or 'auto'}")
                     break
                 else:
+                    # Special handling for AutoTrading disabled (10027)
+                    if result.retcode == TRADE_RETCODE_AUTOTRADING_DISABLED:
+                        error_msg = "AutoTrading is disabled in MT5 Terminal. Please enable AutoTrading in MT5 Terminal (Tools → Options → Expert Advisors → Allow automated trading) to place trades via API."
+                        raise HTTPException(
+                            status_code=400,
+                            detail=error_msg
+                        )
                     # If it's not a filling mode error (10030), fail immediately
                     if result.retcode != 10030:
                         error_msg = result.comment if hasattr(result, 'comment') else f"Error code: {result.retcode}"
@@ -839,7 +848,7 @@ async def get_positions(user: dict = Depends(verify_token)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/v1/positions/{ticket}")
-async def close_position(ticket: int, user: dict = Depends(verify_token)):
+async def close_position(ticket: int, background_tasks: BackgroundTasks, user: dict = Depends(verify_token)):
     """Close a position"""
     mt5 = get_mt5()
     account = _require_account(user["user_id"])
@@ -867,6 +876,7 @@ async def close_position(ticket: int, user: dict = Depends(verify_token)):
         ORDER_FILLING_IOC = 1
         ORDER_FILLING_RETURN = 2
         TRADE_RETCODE_DONE = 10009
+        TRADE_RETCODE_AUTOTRADING_DISABLED = 10027
         
         # Determine filling mode from symbol info
         filling_mode = None
@@ -935,6 +945,13 @@ async def close_position(ticket: int, user: dict = Depends(verify_token)):
                     logger.info(f"Position closed with filling_mode={try_filling_mode or 'auto'}")
                     break
                 else:
+                    # Special handling for AutoTrading disabled (10027)
+                    if result.retcode == TRADE_RETCODE_AUTOTRADING_DISABLED:
+                        error_msg = "AutoTrading is disabled in MT5 Terminal. Please enable AutoTrading in MT5 Terminal (Tools → Options → Expert Advisors → Allow automated trading) to close positions via API."
+                        raise HTTPException(
+                            status_code=400,
+                            detail=error_msg
+                        )
                     # If it's not a filling mode error (10030), fail immediately
                     if result.retcode != 10030:
                         error_msg = result.comment if hasattr(result, 'comment') else f"Error code: {result.retcode}"
@@ -956,6 +973,41 @@ async def close_position(ticket: int, user: dict = Depends(verify_token)):
                 status_code=400,
                 detail=f"Close failed: {error_msg} (code: {result.retcode if result else 'unknown'})"
             )
+        
+        # Log to trade journal (non-blocking - don't fail if this fails)
+        try:
+            position_dict = {
+                'ticket': pos.ticket,
+                'symbol': pos.symbol,
+                'type': pos.type,
+                'volume': float(pos.volume),
+                'price_open': float(pos.price_open),
+                'price_current': float(pos.price_current),
+                'profit': float(pos.profit),
+                'sl': float(pos.sl) if pos.sl > 0 else 0,
+                'tp': float(pos.tp) if pos.tp > 0 else 0,
+                'time_open': pos.time_open
+            }
+            close_result_dict = {
+                'price': float(result.price),
+                'volume': float(result.volume),
+                'ticket': result.order
+            }
+            
+            # Get account ID for trade journal
+            account_id = str(account.id) if hasattr(account, 'id') else account.get('id', '')
+            
+            # Log to trade journal in background (non-blocking)
+            background_tasks.add_task(
+                log_closed_position_to_journal,
+                user_id=user["user_id"],
+                account_id=account_id,
+                position_data=position_dict,
+                close_result=close_result_dict
+            )
+        except Exception as journal_error:
+            logger.warning(f"Failed to log closed position to trade journal: {journal_error}")
+            # Don't fail the close operation if journal logging fails
         
         return {
             "success": True,

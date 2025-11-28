@@ -847,6 +847,105 @@ async def get_positions(user: dict = Depends(verify_token)):
         logger.error(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/v1/trades/history")
+async def get_trade_history(
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    user: dict = Depends(verify_token)
+):
+    """Get trade history (closed deals) from MT5"""
+    mt5 = get_mt5()
+    account = _require_account(user["user_id"])
+    _ensure_account_session(user["user_id"], account, mt5)
+    
+    try:
+        # Parse dates
+        if start_date:
+            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            start_ts = int(start_dt.timestamp())
+        else:
+            # Default to last 30 days
+            start_ts = int((datetime.now() - timedelta(days=30)).timestamp())
+        
+        if end_date:
+            end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            end_ts = int(end_dt.timestamp())
+        else:
+            end_ts = int(datetime.now().timestamp())
+        
+        # Get deals from MT5 history
+        # DEAL_ENTRY_IN = 0 (entry deal)
+        # DEAL_ENTRY_OUT = 1 (exit deal)
+        DEAL_ENTRY_OUT = 1
+        deals = mt5.history_deals_get(start_ts, end_ts)
+        
+        if deals is None or len(deals) == 0:
+            return {"trades": [], "count": 0}
+        
+        # Group deals by position_id to match entry/exit pairs
+        position_deals = {}
+        for deal in deals:
+            pos_id = deal.position_id
+            if pos_id not in position_deals:
+                position_deals[pos_id] = {"entry": None, "exit": None}
+            
+            if deal.entry == 0:  # Entry deal
+                position_deals[pos_id]["entry"] = deal
+            elif deal.entry == DEAL_ENTRY_OUT:  # Exit deal
+                position_deals[pos_id]["exit"] = deal
+        
+        # Build trades from complete entry/exit pairs
+        trades = []
+        ORDER_TYPE_BUY = get_mt5_const("ORDER_TYPE_BUY")
+        
+        for pos_id, deals_pair in position_deals.items():
+            entry_deal = deals_pair.get("entry")
+            exit_deal = deals_pair.get("exit")
+            
+            # Only include trades with both entry and exit
+            if entry_deal and exit_deal:
+                trade_type = "buy" if entry_deal.type == ORDER_TYPE_BUY else "sell"
+                
+                # Calculate P&L percentage
+                entry_price = float(entry_deal.price)
+                exit_price = float(exit_deal.price)
+                pnl_percent = 0.0
+                if entry_price > 0:
+                    if trade_type == "buy":
+                        pnl_percent = ((exit_price - entry_price) / entry_price) * 100
+                    else:
+                        pnl_percent = ((entry_price - exit_price) / entry_price) * 100
+                
+                trades.append({
+                    "ticket": pos_id,
+                    "symbol": exit_deal.symbol,
+                    "type": trade_type,
+                    "volume": float(exit_deal.volume),
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "pnl": float(exit_deal.profit),
+                    "pnl_percent": pnl_percent,
+                    "entry_time": datetime.fromtimestamp(entry_deal.time).isoformat(),
+                    "exit_time": datetime.fromtimestamp(exit_deal.time).isoformat(),
+                    "commission": float(exit_deal.commission) if hasattr(exit_deal, 'commission') else 0,
+                    "swap": float(exit_deal.swap) if hasattr(exit_deal, 'swap') else 0
+                })
+        
+        # Sort by exit time (most recent first) and limit
+        trades.sort(key=lambda x: x["exit_time"], reverse=True)
+        trades = trades[:limit]
+        
+        return {
+            "trades": trades,
+            "count": len(trades)
+        }
+    except Exception as e:
+        logger.error(f"Error fetching trade history: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.delete("/api/v1/positions/{ticket}")
 async def close_position(ticket: int, background_tasks: BackgroundTasks, user: dict = Depends(verify_token)):
     """Close a position"""

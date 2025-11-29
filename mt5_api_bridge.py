@@ -5,7 +5,7 @@ Web API for MT5 trading and data access on Linux VPS
 Uses Supabase JWT authentication (same as Trainflow backend)
 """
 
-from fastapi import FastAPI, Depends, HTTPException, Query, status, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, Query, status, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -182,6 +182,53 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
             detail="Token verification failed",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+async def verify_token_or_service_role(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))
+) -> Dict[str, Any]:
+    """
+    Verify JWT token OR service role key for backend operations.
+    
+    Allows:
+    - User JWT tokens (normal operation) - requires user account
+    - Service role key (backend auto-resume, market data only) - no user account needed
+    
+    This enables backend to fetch market data during auto-resume without user session.
+    Market data is public/shared, so service role access is safe.
+    Trading operations still require user JWT (secure).
+    """
+    # First, try service role key from header (for backend operations)
+    service_key = request.headers.get("X-Service-Key")
+    backend_service_key = os.getenv("BACKEND_SERVICE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    
+    if service_key and backend_service_key:
+        if service_key == backend_service_key:
+            logger.info("✅ Service role authentication successful for backend operation")
+            return {
+                "service_role": True,
+                "user_id": None,  # No user for service role
+                "email": None,
+                "provider": "service_role"
+            }
+        else:
+            logger.warning("⚠️ Invalid service key provided")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid service key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    
+    # If no service key, try normal JWT token authentication
+    if credentials and credentials.credentials:
+        return await verify_token(credentials)
+    
+    # No authentication provided
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required: Provide either Bearer token or X-Service-Key header",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 # ============ MODELS ============
 
@@ -882,12 +929,32 @@ async def get_historical_data(
     symbol: str,
     timeframe: str = Query("H1", description="M1, M5, M15, M30, H1, H4, D1, W1, MN1"),
     bars: int = Query(100, ge=1, le=10000),
-    user: dict = Depends(verify_token)
+    request: Request = None,
+    auth: dict = Depends(verify_token_or_service_role)
 ):
-    """Get historical market data"""
+    """
+    Get historical market data.
+    
+    Supports:
+    - User JWT token (normal operation) - requires user account
+    - Service role key via X-Service-Key header (backend auto-resume) - no user account needed
+    
+    Market data is public/shared, so service role access is safe for read-only operations.
+    """
     mt5 = get_mt5()
-    account = _require_account(user["user_id"])
-    _ensure_account_session(user["user_id"], account, mt5)
+    
+    # If service role, skip account requirement (market data is public)
+    if auth.get("service_role"):
+        # Market data doesn't need user account - just ensure MT5 is available
+        if not MT5_AVAILABLE:
+            raise HTTPException(status_code=503, detail="MT5 not available")
+        # Try to initialize if not already done (for service role requests)
+        if not mt5.initialize():
+            logger.warning("MT5 initialize() returned False for service role request")
+    else:
+        # Normal user request - require account
+        account = _require_account(auth["user_id"])
+        _ensure_account_session(auth["user_id"], account, mt5)
     
     try:
         # Map timeframe - get constants from MT5
@@ -941,12 +1008,28 @@ async def get_data_range(
     timeframe: str = Query("H1"),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    user: dict = Depends(verify_token)
+    request: Request = None,
+    auth: dict = Depends(verify_token_or_service_role)
 ):
-    """Get historical data for date range"""
+    """
+    Get historical data for date range.
+    
+    Supports:
+    - User JWT token (normal operation) - requires user account
+    - Service role key via X-Service-Key header (backend auto-resume) - no user account needed
+    """
     mt5 = get_mt5()
-    account = _require_account(user["user_id"])
-    _ensure_account_session(user["user_id"], account, mt5)
+    
+    # If service role, skip account requirement (market data is public)
+    if auth.get("service_role"):
+        if not MT5_AVAILABLE:
+            raise HTTPException(status_code=503, detail="MT5 not available")
+        if not mt5.initialize():
+            logger.warning("MT5 initialize() returned False for service role request")
+    else:
+        # Normal user request - require account
+        account = _require_account(auth["user_id"])
+        _ensure_account_session(auth["user_id"], account, mt5)
     
     try:
         timeframe_map = {
@@ -1476,11 +1559,29 @@ async def close_position(ticket: int, background_tasks: BackgroundTasks, user: d
 # ============ SYMBOLS ============
 
 @app.get("/api/v1/symbols")
-async def get_symbols(user: dict = Depends(verify_token)):
-    """Get all available symbols"""
+async def get_symbols(
+    request: Request = None,
+    auth: dict = Depends(verify_token_or_service_role)
+):
+    """
+    Get all available symbols.
+    
+    Supports:
+    - User JWT token (normal operation) - requires user account
+    - Service role key via X-Service-Key header (backend auto-resume) - no user account needed
+    """
     mt5 = get_mt5()
-    account = _require_account(user["user_id"])
-    _ensure_account_session(user["user_id"], account, mt5)
+    
+    # If service role, skip account requirement (symbols list is public)
+    if auth.get("service_role"):
+        if not MT5_AVAILABLE:
+            raise HTTPException(status_code=503, detail="MT5 not available")
+        if not mt5.initialize():
+            logger.warning("MT5 initialize() returned False for service role request")
+    else:
+        # Normal user request - require account
+        account = _require_account(auth["user_id"])
+        _ensure_account_session(auth["user_id"], account, mt5)
     
     try:
         symbols = mt5.symbols_get()

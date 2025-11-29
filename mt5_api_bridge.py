@@ -377,6 +377,10 @@ async def health_check():
 
 # ============ ACCOUNT ENDPOINTS ============
 
+class MT5LoginTimeout(Exception):
+    """Custom exception for MT5 login timeouts from RPyC"""
+    pass
+
 @app.post("/api/v1/accounts/connect", response_model=AccountResponse)
 async def connect_account(
     request: AccountConnectRequest,

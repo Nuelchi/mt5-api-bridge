@@ -16,6 +16,7 @@ import os
 import jwt
 import time
 import asyncio
+import signal
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 # Supabase authentication (same as backend)
@@ -419,33 +420,13 @@ async def connect_account(
         def login_with_timeout():
             logger.info(f"Executing mt5.login() in thread for login={login_id}, server={request.server}")
             try:
-                # Set a signal-based timeout as backup (if RPyC blocks)
-                import signal
-                
-                def timeout_handler(signum, frame):
-                    logger.error(f"Signal timeout triggered for login={login_id}, server={request.server}")
-                    raise TimeoutError("Login operation timed out")
-                
-                # Set alarm for backup timeout (only works on Unix)
-                if hasattr(signal, 'SIGALRM'):
-                    signal.signal(signal.SIGALRM, timeout_handler)
-                    signal.alarm(int(login_timeout + 5))  # 5 seconds buffer
-                
-                try:
-                    result = mt5.login(
-                        login_id,
-                        password=request.password,
-                        server=request.server,
-                    )
-                    logger.info(f"mt5.login() returned: {result}")
-                    return result
-                finally:
-                    # Cancel alarm
-                    if hasattr(signal, 'SIGALRM'):
-                        signal.alarm(0)
-            except TimeoutError:
-                logger.error(f"Timeout in mt5.login() thread for login={login_id}, server={request.server}")
-                raise
+                result = mt5.login(
+                    login_id,
+                    password=request.password,
+                    server=request.server,
+                )
+                logger.info(f"mt5.login() returned: {result}")
+                return result
             except Exception as e:
                 logger.error(f"Exception in mt5.login() thread: {e}", exc_info=True)
                 raise

@@ -411,23 +411,47 @@ async def connect_account(
         logger.info(f"Starting MT5 login attempt for login={login_id}, server={request.server}")
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mt5-login")
         
+        # Use shorter timeout for non-MetaQuotes servers (they tend to be slower/unreliable)
+        is_metaquotes = "MetaQuotes" in request.server
+        login_timeout = 15.0 if is_metaquotes else 30.0
+        logger.info(f"Using {login_timeout}s timeout for server {request.server}")
+        
         def login_with_timeout():
             logger.info(f"Executing mt5.login() in thread for login={login_id}, server={request.server}")
             try:
-                result = mt5.login(
-                    login_id,
-                    password=request.password,
-                    server=request.server,
-                )
-                logger.info(f"mt5.login() returned: {result}")
-                return result
+                # Set a signal-based timeout as backup (if RPyC blocks)
+                import signal
+                
+                def timeout_handler(signum, frame):
+                    logger.error(f"Signal timeout triggered for login={login_id}, server={request.server}")
+                    raise TimeoutError("Login operation timed out")
+                
+                # Set alarm for backup timeout (only works on Unix)
+                if hasattr(signal, 'SIGALRM'):
+                    signal.signal(signal.SIGALRM, timeout_handler)
+                    signal.alarm(int(login_timeout + 5))  # 5 seconds buffer
+                
+                try:
+                    result = mt5.login(
+                        login_id,
+                        password=request.password,
+                        server=request.server,
+                    )
+                    logger.info(f"mt5.login() returned: {result}")
+                    return result
+                finally:
+                    # Cancel alarm
+                    if hasattr(signal, 'SIGALRM'):
+                        signal.alarm(0)
+            except TimeoutError:
+                logger.error(f"Timeout in mt5.login() thread for login={login_id}, server={request.server}")
+                raise
             except Exception as e:
                 logger.error(f"Exception in mt5.login() thread: {e}", exc_info=True)
                 raise
         
         try:
-            # 30 second timeout for login
-            logger.info(f"Waiting for login with 30s timeout...")
+            logger.info(f"Waiting for login with {login_timeout}s timeout...")
             try:
                 loop = asyncio.get_event_loop()
             except RuntimeError:
@@ -436,15 +460,22 @@ async def connect_account(
             
             authorized = await asyncio.wait_for(
                 loop.run_in_executor(executor, login_with_timeout),
-                timeout=30.0
+                timeout=login_timeout
             )
             logger.info(f"Login attempt completed: authorized={authorized}")
         except asyncio.TimeoutError:
-            logger.error(f"⏱️ Login timeout after 30s for login={login_id}, server={request.server}")
+            logger.error(f"⏱️ Login timeout after {login_timeout}s for login={login_id}, server={request.server}")
             executor.shutdown(wait=False, cancel_futures=True)
             raise HTTPException(
                 status_code=408,
-                detail=f"Login timeout: Unable to connect to server '{request.server}' after 30 seconds. Please verify the server name is correct and the broker is accessible."
+                detail=f"Login timeout: Unable to connect to server '{request.server}' after {login_timeout} seconds. The server may be unreachable, the server name may be incorrect, or there may be network issues. Please verify the server name matches exactly what you see in MT5 terminal."
+            )
+        except TimeoutError:
+            logger.error(f"⏱️ Signal timeout for login={login_id}, server={request.server}")
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise HTTPException(
+                status_code=408,
+                detail=f"Login timeout: Unable to connect to server '{request.server}'. The server may be unreachable or the server name may be incorrect."
             )
         except Exception as e:
             logger.error(f"Login error for login={login_id}, server={request.server}: {e}", exc_info=True)
@@ -673,6 +704,89 @@ async def suggest_servers(
         "count": len(suggestions),
         "query": query
     }
+
+@app.post("/api/v1/servers/verify")
+async def verify_server(
+    server: str = Query(..., min_length=1, max_length=100),
+    user: dict = Depends(verify_token)
+):
+    """
+    Verify if an MT5 server is accessible (quick connectivity test).
+    This helps users know if a server name is correct before attempting full login.
+    Uses a very short timeout (5 seconds) to quickly test connectivity.
+    """
+    mt5 = get_mt5()
+    
+    if not hasattr(mt5, "login"):
+        raise HTTPException(
+            status_code=503,
+            detail="MT5 library does not allow programmatic login on this platform",
+        )
+    
+    # Use a dummy login to test server connectivity (will fail but quickly)
+    # This is faster than full login and helps verify server name
+    logger.info(f"🔍 Verifying server connectivity: {server}")
+    
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mt5-verify")
+    
+    def verify_connectivity():
+        try:
+            # Try login with invalid credentials - this will fail quickly if server is reachable
+            # or timeout if server is unreachable
+            result = mt5.login(
+                99999999,  # Invalid login
+                password="test",
+                server=server,
+            )
+            # If we get here, server is reachable (even if login failed)
+            return True
+        except Exception as e:
+            # Check if it's a timeout/connection error vs auth error
+            error_str = str(e).lower()
+            if "timeout" in error_str or "connection" in error_str or "network" in error_str:
+                return False
+            # Auth errors mean server is reachable
+            return True
+    
+    try:
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Very short timeout - just to test if server responds
+        is_reachable = await asyncio.wait_for(
+            loop.run_in_executor(executor, verify_connectivity),
+            timeout=5.0  # 5 second timeout for quick check
+        )
+        
+        return {
+            "server": server,
+            "reachable": is_reachable,
+            "message": "Server is reachable" if is_reachable else "Server may be unreachable or name is incorrect"
+        }
+    except asyncio.TimeoutError:
+        logger.warning(f"⏱️ Server verification timeout for {server}")
+        executor.shutdown(wait=False, cancel_futures=True)
+        return {
+            "server": server,
+            "reachable": False,
+            "message": "Server verification timed out - server may be unreachable or name is incorrect"
+        }
+    except Exception as e:
+        logger.error(f"Server verification error for {server}: {e}", exc_info=True)
+        executor.shutdown(wait=False, cancel_futures=True)
+        return {
+            "server": server,
+            "reachable": False,
+            "message": f"Verification error: {str(e)}"
+        }
+    finally:
+        try:
+            executor.shutdown(wait=True, timeout=2)
+        except Exception:
+            pass
 
 @app.get("/api/v1/account/info")
 async def get_account_info(user: dict = Depends(verify_token)):

@@ -427,6 +427,10 @@ async def connect_account(
                 )
                 logger.info(f"mt5.login() returned: {result}")
                 return result
+            except TimeoutError as e:
+                logger.error(f"RPyC TimeoutError in mt5.login() thread: {e}")
+                # Re-raise as a custom exception that we can catch
+                raise TimeoutError(f"MT5 login timed out: {e}")
             except Exception as e:
                 logger.error(f"Exception in mt5.login() thread: {e}", exc_info=True)
                 raise
@@ -451,12 +455,12 @@ async def connect_account(
                 status_code=408,
                 detail=f"Login timeout: Unable to connect to server '{request.server}' after {login_timeout} seconds. The server may be unreachable, the server name may be incorrect, or there may be network issues. Please verify the server name matches exactly what you see in MT5 terminal."
             )
-        except TimeoutError:
-            logger.error(f"⏱️ Signal timeout for login={login_id}, server={request.server}")
+        except TimeoutError as te:
+            logger.error(f"⏱️ RPyC/MT5 timeout for login={login_id}, server={request.server}: {te}")
             executor.shutdown(wait=False, cancel_futures=True)
             raise HTTPException(
                 status_code=408,
-                detail=f"Login timeout: Unable to connect to server '{request.server}'. The server may be unreachable or the server name may be incorrect."
+                detail=f"Login timeout: Unable to connect to server '{request.server}'. The MT5 connection timed out. This usually means: 1) The server name is incorrect, 2) The broker server is unreachable from this VPS, or 3) Network/firewall issues. Please verify the exact server name from your MT5 terminal."
             )
         except Exception as e:
             logger.error(f"Login error for login={login_id}, server={request.server}: {e}", exc_info=True)

@@ -15,6 +15,8 @@ import logging
 import os
 import jwt
 import time
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 # Supabase authentication (same as backend)
 from supabase import Client
@@ -402,14 +404,46 @@ async def connect_account(
                 detail="MT5 login must be numeric for automation. Please verify account number.",
             )
 
-        authorized = mt5.login(
-            login_id,
-            password=request.password,
-            server=request.server,
-        )
+        # Run login in executor with timeout to prevent hanging
+        loop = asyncio.get_event_loop()
+        executor = ThreadPoolExecutor(max_workers=1)
+        
+        def login_with_timeout():
+            return mt5.login(
+                login_id,
+                password=request.password,
+                server=request.server,
+            )
+        
+        try:
+            # 30 second timeout for login
+            authorized = await asyncio.wait_for(
+                loop.run_in_executor(executor, login_with_timeout),
+                timeout=30.0
+            )
+        except asyncio.TimeoutError:
+            executor.shutdown(wait=False)
+            raise HTTPException(
+                status_code=408,
+                detail=f"Login timeout: Unable to connect to server '{request.server}'. Please verify the server name is correct and the broker is accessible."
+            )
+        except Exception as e:
+            executor.shutdown(wait=False)
+            logger.error(f"Login error: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Login error: {str(e)}"
+            )
+        finally:
+            executor.shutdown(wait=True)
+        
         if not authorized:
             error = mt5.last_error() if hasattr(mt5, "last_error") else "Login failed"
-            raise HTTPException(status_code=400, detail=f"Login failed: {error}")
+            error_msg = f"Login failed: {error}"
+            # Provide more helpful error messages
+            if "invalid" in str(error).lower() or "wrong" in str(error).lower():
+                error_msg += f" Please verify login ({login_id}), password, and server name ('{request.server}') are correct."
+            raise HTTPException(status_code=400, detail=error_msg)
 
         account_info = mt5.account_info()
         if not account_info:
@@ -435,6 +469,182 @@ async def connect_account(
     except Exception as exc:
         logger.error("Connection error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+# Common MT5 broker servers list for autocomplete
+COMMON_MT5_SERVERS = [
+    # MetaQuotes (Demo)
+    "MetaQuotes-Demo",
+    "MetaQuotes-Software-Demo",
+    
+    # Popular Brokers - Demo
+    "ICMarkets-Demo",
+    "ICMarkets-Demo02",
+    "ICMarkets-Demo03",
+    "ICMarkets-Live",
+    "ICMarkets-Live02",
+    "ICMarkets-Live03",
+    
+    "FXTM-Demo",
+    "FXTM-Demo-Server",
+    "FXTM-Live",
+    "FXTM-Live-Server",
+    
+    "XMGlobal-Demo",
+    "XMGlobal-Demo-1",
+    "XMGlobal-Demo-2",
+    "XMGlobal-Demo-3",
+    "XMGlobal-Demo-4",
+    "XMGlobal-Demo-5",
+    "XMGlobal-Live",
+    "XMGlobal-Live-1",
+    "XMGlobal-Live-2",
+    "XMGlobal-Live-3",
+    "XMGlobal-Live-4",
+    "XMGlobal-Live-5",
+    
+    "Exness-Real",
+    "Exness-Demo",
+    "Exness-Real-1",
+    "Exness-Real-2",
+    "Exness-Demo-1",
+    "Exness-Demo-2",
+    
+    "ForexTime-Demo",
+    "ForexTime-Demo-Server",
+    "ForexTime-Live",
+    "ForexTime-Live-Server",
+    "ForexTime-Pro",
+    "ForexTime-Pro-Server",
+    
+    "HFMarkets-Demo",
+    "HFMarkets-Demo-Server",
+    "HFMarkets-Live",
+    "HFMarkets-Live-Server",
+    "HFMarketsGlobal-Demo",
+    "HFMarketsGlobal-Live",
+    
+    "Pepperstone-Demo",
+    "Pepperstone-Demo-Server",
+    "Pepperstone-Live",
+    "Pepperstone-Live-Server",
+    
+    "AvaTrade-Demo",
+    "AvaTrade-Demo-Server",
+    "AvaTrade-Live",
+    "AvaTrade-Live-Server",
+    
+    "OANDA-Demo",
+    "OANDA-Live",
+    "OANDA-v20-Demo",
+    "OANDA-v20-Live",
+    
+    "AdmiralMarkets-Demo",
+    "AdmiralMarkets-Demo-Server",
+    "AdmiralMarkets-Live",
+    "AdmiralMarkets-Live-Server",
+    
+    "FXCM-Demo",
+    "FXCM-Live",
+    
+    "Alpari-Demo",
+    "Alpari-Live",
+    "Alpari-International-Demo",
+    "Alpari-International-Live",
+    
+    "RoboForex-Demo",
+    "RoboForex-Live",
+    "RoboForex-Pro",
+    
+    "Tickmill-Demo",
+    "Tickmill-Live",
+    
+    "Vantage-Demo",
+    "Vantage-Live",
+    "VantageFX-Demo",
+    "VantageFX-Live",
+    
+    "OctaFX-Demo",
+    "OctaFX-Live",
+    
+    "FBS-Demo",
+    "FBS-Live",
+    
+    "JustForex-Demo",
+    "JustForex-Live",
+    
+    "InstaForex-Demo",
+    "InstaForex-Live",
+    
+    "HotForex-Demo",
+    "HotForex-Live",
+    
+    "FXOpen-Demo",
+    "FXOpen-Live",
+    
+    "LiteForex-Demo",
+    "LiteForex-Live",
+    
+    "NordFX-Demo",
+    "NordFX-Live",
+    
+    "AMarkets-Demo",
+    "AMarkets-Live",
+    
+    "FXDD-Demo",
+    "FXDD-Live",
+    
+    "FXPrimus-Demo",
+    "FXPrimus-Live",
+    
+    "IronFX-Demo",
+    "IronFX-Live",
+    
+    "TradersWay-Demo",
+    "TradersWay-Live",
+    
+    "Tradeview-Demo",
+    "Tradeview-Live",
+    
+    "Axi-Demo",
+    "Axi-Live",
+    
+    "FP Markets-Demo",
+    "FP Markets-Live",
+    
+    "ThinkMarkets-Demo",
+    "ThinkMarkets-Live",
+    
+    "VPSForex-Demo",
+    "VPSForex-Live",
+]
+
+@app.get("/api/v1/servers/suggest")
+async def suggest_servers(
+    query: str = Query("", min_length=0, max_length=100),
+    limit: int = Query(20, ge=1, le=50),
+    user: dict = Depends(verify_token)
+):
+    """
+    Suggest MT5 server names based on user input (autocomplete).
+    Returns a filtered list of common MT5 broker servers.
+    """
+    query_lower = query.lower().strip()
+    
+    if not query_lower:
+        # Return most common servers if no query
+        suggestions = COMMON_MT5_SERVERS[:limit]
+    else:
+        # Filter servers that match the query
+        suggestions = [
+            server for server in COMMON_MT5_SERVERS
+            if query_lower in server.lower()
+        ][:limit]
+    
+    return {
+        "suggestions": suggestions,
+        "count": len(suggestions),
+        "query": query
+    }
 
 @app.get("/api/v1/account/info")
 async def get_account_info(user: dict = Depends(verify_token)):

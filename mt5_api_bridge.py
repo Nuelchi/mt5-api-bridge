@@ -421,10 +421,6 @@ async def connect_account(
         login_timeout = 15.0 if is_metaquotes else 30.0
         logger.info(f"Using {login_timeout}s timeout for server {request.server}")
         
-        class MT5LoginTimeout(Exception):
-            """Custom exception for MT5 login timeouts"""
-            pass
-        
         def login_with_timeout():
             logger.info(f"Executing mt5.login() in thread for login={login_id}, server={request.server}")
             try:

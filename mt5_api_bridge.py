@@ -522,6 +522,12 @@ COMMON_MT5_SERVERS = [
     "HFMarkets-Live-Server",
     "HFMarketsGlobal-Demo",
     "HFMarketsGlobal-Live",
+    "HFMarketsGlobal-Demo-Server",
+    "HFMarketsGlobal-Live-Server",
+    "HFM-Demo",
+    "HFM-Live",
+    "HFMGlobal-Demo",
+    "HFMGlobal-Live",
     
     "Pepperstone-Demo",
     "Pepperstone-Demo-Server",

@@ -463,20 +463,44 @@ async def connect_account(
         logger.info(f"Starting MT5 login attempt for login={login_id}, server={request.server}")
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mt5-login")
         
-        # Use shorter timeout for non-MetaQuotes servers (they tend to be slower/unreliable)
+        # Use appropriate timeout based on server type
+        # MetaQuotes servers are fast (15s)
+        # External brokers (HFMarkets, Exness, FTMO, etc.) need more time (90s)
+        # Some brokers have slower authentication or network latency
         is_metaquotes = "MetaQuotes" in request.server
-        login_timeout = 15.0 if is_metaquotes else 30.0
-        logger.info(f"Using {login_timeout}s timeout for server {request.server}")
+        if is_metaquotes:
+            login_timeout = 15.0
+        else:
+            # External brokers - give them plenty of time
+            # Some brokers can take 60-90 seconds for initial connection
+            login_timeout = 90.0
+        logger.info(f"Using {login_timeout}s timeout for server {request.server} (MetaQuotes: {is_metaquotes})")
         
         def login_with_timeout():
             logger.info(f"Executing mt5.login() in thread for login={login_id}, server={request.server}")
+            logger.info(f"⚠️  External broker login may take 60-90 seconds - please be patient...")
             try:
+                # For external brokers, the login can take a long time
+                # The MT5 terminal needs to establish connection, authenticate, and sync
                 result = mt5.login(
                     login_id,
                     password=request.password,
                     server=request.server,
                 )
                 logger.info(f"mt5.login() returned: {result}")
+                if result:
+                    # Give it a moment to fully complete the login process
+                    import time
+                    time.sleep(2)
+                    # Verify login by checking account info
+                    try:
+                        account_info = mt5.account_info()
+                        if account_info:
+                            logger.info(f"✅ Login verified - Account: {account_info.login}, Server: {account_info.server}")
+                        else:
+                            logger.warning("⚠️  Login returned True but account_info() is None - login may still be completing")
+                    except Exception as verify_error:
+                        logger.warning(f"⚠️  Could not verify login immediately: {verify_error}")
                 return result
             except TimeoutError as e:
                 logger.error(f"RPyC TimeoutError in mt5.login() thread: {e}")
@@ -485,7 +509,7 @@ async def connect_account(
             except Exception as e:
                 error_str = str(e).lower()
                 # Check if it's an RPyC timeout
-                if "timeout" in error_str or "expired" in error_str:
+                if "timeout" in error_str or "expired" in error_str or "result expired" in error_str:
                     logger.error(f"Timeout-related error in mt5.login() thread: {e}")
                     raise MT5LoginTimeout(f"MT5 login timed out: {e}")
                 logger.error(f"Exception in mt5.login() thread: {e}", exc_info=True)
@@ -513,10 +537,12 @@ async def connect_account(
             )
         except MT5LoginTimeout as te:
             logger.error(f"⏱️ MT5 login timeout (RPyC) for login={login_id}, server={request.server}: {te}")
+            logger.error(f"💡 This broker may need more time. The MT5 terminal is trying to connect but the RPyC call timed out.")
+            logger.error(f"💡 Try: 1) Verify server name in MT5 terminal, 2) Check if broker blocks VPS IPs, 3) Try connecting manually via VNC first")
             executor.shutdown(wait=False, cancel_futures=True)
             raise HTTPException(
                 status_code=408,
-                detail=f"Login timeout: Unable to connect to server '{request.server}'. The MT5 connection timed out. This usually means: 1) The server name is incorrect, 2) The broker server is unreachable from this VPS, or 3) Network/firewall issues. Please verify the exact server name from your MT5 terminal."
+                detail=f"Login timeout: Unable to connect to server '{request.server}' after {login_timeout} seconds. The MT5 terminal is attempting to connect but the operation timed out. This can happen with external brokers that have slower authentication. Try: 1) Verify the exact server name matches what you see in MT5 terminal, 2) Check if the broker allows connections from this VPS IP, 3) Try connecting manually via VNC first to verify credentials work."
             )
         except TimeoutError as te:
             logger.error(f"⏱️ General timeout for login={login_id}, server={request.server}: {te}")

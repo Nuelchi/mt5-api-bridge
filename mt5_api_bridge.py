@@ -409,43 +409,55 @@ async def connect_account(
 
         # Run login in executor with timeout to prevent hanging
         logger.info(f"Starting MT5 login attempt for login={login_id}, server={request.server}")
-        loop = asyncio.get_event_loop()
-        executor = ThreadPoolExecutor(max_workers=1)
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mt5-login")
         
         def login_with_timeout():
             logger.info(f"Executing mt5.login() in thread for login={login_id}, server={request.server}")
-            result = mt5.login(
-                login_id,
-                password=request.password,
-                server=request.server,
-            )
-            logger.info(f"mt5.login() returned: {result}")
-            return result
+            try:
+                result = mt5.login(
+                    login_id,
+                    password=request.password,
+                    server=request.server,
+                )
+                logger.info(f"mt5.login() returned: {result}")
+                return result
+            except Exception as e:
+                logger.error(f"Exception in mt5.login() thread: {e}", exc_info=True)
+                raise
         
         try:
             # 30 second timeout for login
             logger.info(f"Waiting for login with 30s timeout...")
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
             authorized = await asyncio.wait_for(
                 loop.run_in_executor(executor, login_with_timeout),
                 timeout=30.0
             )
             logger.info(f"Login attempt completed: authorized={authorized}")
         except asyncio.TimeoutError:
-            logger.error(f"Login timeout after 30s for login={login_id}, server={request.server}")
-            executor.shutdown(wait=False)
+            logger.error(f"⏱️ Login timeout after 30s for login={login_id}, server={request.server}")
+            executor.shutdown(wait=False, cancel_futures=True)
             raise HTTPException(
                 status_code=408,
-                detail=f"Login timeout: Unable to connect to server '{request.server}'. Please verify the server name is correct and the broker is accessible."
+                detail=f"Login timeout: Unable to connect to server '{request.server}' after 30 seconds. Please verify the server name is correct and the broker is accessible."
             )
         except Exception as e:
             logger.error(f"Login error for login={login_id}, server={request.server}: {e}", exc_info=True)
-            executor.shutdown(wait=False)
+            executor.shutdown(wait=False, cancel_futures=True)
             raise HTTPException(
                 status_code=500,
                 detail=f"Login error: {str(e)}"
             )
         finally:
-            executor.shutdown(wait=True)
+            try:
+                executor.shutdown(wait=True, timeout=5)
+            except Exception:
+                pass
         
         if not authorized:
             error = mt5.last_error() if hasattr(mt5, "last_error") else "Login failed"

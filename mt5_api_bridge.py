@@ -894,13 +894,49 @@ async def verify_server(
 
 @app.get("/api/v1/account/info")
 async def get_account_info(user: dict = Depends(verify_token)):
-    """Get account information"""
+    """Get account information with timeout handling"""
     mt5 = get_mt5()
     account = _require_account(user["user_id"])
-    _ensure_account_session(user["user_id"], account, mt5)
     
+    # Try to ensure account session with timeout
     try:
-        account_info = mt5.account_info()
+        _ensure_account_session(user["user_id"], account, mt5)
+    except HTTPException as e:
+        if e.status_code == 408:  # Timeout
+            raise HTTPException(
+                status_code=503,
+                detail="MT5 Terminal is not responding. Please wait a moment and try again."
+            )
+        raise
+    
+    # Get account info with timeout
+    try:
+        def get_account_info_sync():
+            return mt5.account_info()
+        
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            account_info = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(executor, get_account_info_sync),
+                timeout=10.0  # 10 second timeout
+            )
+        except asyncio.TimeoutError:
+            logger.error("MT5 account_info() timed out after 10s")
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise HTTPException(
+                status_code=503,
+                detail="MT5 Terminal is not responding. Please wait a moment and try again."
+            )
+        except Exception as e:
+            logger.error(f"Error getting account info: {e}")
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            try:
+                executor.shutdown(wait=True, timeout=2)
+            except:
+                pass
+        
         if account_info is None:
             raise HTTPException(status_code=404, detail="Not connected to MT5")
         

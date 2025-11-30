@@ -898,16 +898,43 @@ async def get_account_info(user: dict = Depends(verify_token)):
     mt5 = get_mt5()
     account = _require_account(user["user_id"])
     
-    # Try to ensure account session with timeout
+    # Try to ensure account session with timeout - but don't block if it fails
     try:
-        _ensure_account_session(user["user_id"], account, mt5)
-    except HTTPException as e:
-        if e.status_code == 408:  # Timeout
-            raise HTTPException(
-                status_code=503,
-                detail="MT5 Terminal is not responding. Please wait a moment and try again."
+        # Wrap in asyncio timeout to prevent hanging
+        def ensure_session():
+            _ensure_account_session(user["user_id"], account, mt5)
+        
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(executor, ensure_session),
+                timeout=5.0  # 5 second timeout for session check
             )
+        except asyncio.TimeoutError:
+            logger.warning("Account session check timed out, continuing anyway")
+            executor.shutdown(wait=False, cancel_futures=True)
+            # Continue - don't fail the request
+        except HTTPException as e:
+            executor.shutdown(wait=False, cancel_futures=True)
+            if e.status_code == 408:  # Timeout
+                raise HTTPException(
+                    status_code=503,
+                    detail="MT5 Terminal is not responding. Please wait a moment and try again."
+                )
+            raise
+        except Exception as e:
+            logger.warning(f"Account session check error: {e}, continuing anyway")
+            executor.shutdown(wait=False, cancel_futures=True)
+            # Continue - don't fail the request
+        finally:
+            try:
+                executor.shutdown(wait=True, timeout=1)
+            except:
+                pass
+    except HTTPException:
         raise
+    except Exception as e:
+        logger.warning(f"Account session setup error: {e}, continuing anyway")
     
     # Get account info with timeout
     try:
@@ -918,27 +945,35 @@ async def get_account_info(user: dict = Depends(verify_token)):
         try:
             account_info = await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(executor, get_account_info_sync),
-                timeout=10.0  # 10 second timeout
+                timeout=8.0  # 8 second timeout (less than nginx's 60s)
             )
         except asyncio.TimeoutError:
-            logger.error("MT5 account_info() timed out after 10s")
+            logger.error("MT5 account_info() timed out after 8s")
             executor.shutdown(wait=False, cancel_futures=True)
             raise HTTPException(
                 status_code=503,
                 detail="MT5 Terminal is not responding. Please wait a moment and try again."
             )
         except Exception as e:
+            error_str = str(e).lower()
+            if "timeout" in error_str or "expired" in error_str:
+                logger.error(f"MT5 account_info() timeout: {e}")
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise HTTPException(
+                    status_code=503,
+                    detail="MT5 Terminal is not responding. Please wait a moment and try again."
+                )
             logger.error(f"Error getting account info: {e}")
             executor.shutdown(wait=False, cancel_futures=True)
             raise HTTPException(status_code=500, detail=str(e))
         finally:
             try:
-                executor.shutdown(wait=True, timeout=2)
+                executor.shutdown(wait=True, timeout=1)
             except:
                 pass
         
         if account_info is None:
-            raise HTTPException(status_code=404, detail="Not connected to MT5")
+            raise HTTPException(status_code=503, detail="MT5 Terminal is not ready. Please wait a moment and try again.")
         
         return {
             "login": account_info.login,

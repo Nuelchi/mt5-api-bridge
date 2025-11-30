@@ -19,6 +19,15 @@ else
     echo "✅ Wine already installed: $(wine --version)"
 fi
 
+# Ensure virtual display is running
+if ! pgrep -x Xvfb > /dev/null; then
+    echo "   Starting virtual display (Xvfb)..."
+    Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+    sleep 2
+fi
+export DISPLAY=:99
+echo "   ✅ Virtual display ready (DISPLAY=:99)"
+
 # Create MT5 directory
 MT5_DIR="$HOME/.wine/drive_c/Program Files/MetaTrader 5"
 mkdir -p "$MT5_DIR"
@@ -45,9 +54,23 @@ echo "📦 Installing MT5 Terminal (this may take a few minutes)..."
 echo "   Note: You may see Wine GUI windows - installation is in progress"
 
 # Install MT5 (silent mode if possible)
-WINEDLLOVERRIDES="mscoree,mshtml=" wine mt5setup.exe /S 2>/dev/null || {
-    echo "⚠️  Silent install failed, trying interactive..."
-    WINEDLLOVERRIDES="mscoree,mshtml=" wine mt5setup.exe
+echo "   Installing with virtual display (DISPLAY=:99)..."
+DISPLAY=:99 WINEDLLOVERRIDES="mscoree,mshtml=" timeout 600 wine mt5setup.exe /auto >/dev/null 2>&1 || {
+    echo "   ⚠️  Auto install failed, trying interactive..."
+    DISPLAY=:99 WINEDLLOVERRIDES="mscoree,mshtml=" wine mt5setup.exe >/dev/null 2>&1 &
+    echo "   Installation started in background..."
+    echo "   Waiting for installation to complete (this may take 5-10 minutes)..."
+    # Wait up to 10 minutes for installation
+    for i in {1..60}; do
+        sleep 10
+        if [ -f "$MT5_DIR/terminal64.exe" ]; then
+            echo "   ✅ Installation detected!"
+            break
+        fi
+        if [ $((i % 6)) -eq 0 ]; then
+            echo "   Still installing... ($((i*10))s elapsed)"
+        fi
+    done
 }
 
 # Wait for installation
@@ -92,6 +115,10 @@ echo "   2. Log in to your MT5 account in the terminal"
 echo "   3. Install/start RPC server EA in MT5"
 echo "   4. Test connection: python3 test_mt5_connection_v3.py"
 echo ""
+
+
+
+
 
 
 

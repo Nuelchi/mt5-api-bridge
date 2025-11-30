@@ -498,6 +498,31 @@ async def connect_account(
                 detail="MT5 login must be numeric for automation. Please verify account number.",
             )
 
+        # Ensure MT5 is initialized before attempting login
+        logger.info("🔄 Ensuring MT5 is initialized before login...")
+        try:
+            if not mt5.is_initialized():
+                logger.info("MT5 not initialized, calling initialize()...")
+                initialized = mt5.initialize()
+                if initialized:
+                    logger.info("✅ MT5 initialized successfully")
+                    import time
+                    time.sleep(2)  # Give MT5 a moment to be ready
+                else:
+                    error = mt5.last_error() if hasattr(mt5, 'last_error') else "Unknown error"
+                    logger.warning(f"⚠️  MT5 initialize() returned False: {error}")
+                    # Continue anyway - sometimes this is OK
+            else:
+                logger.info("✅ MT5 already initialized")
+        except Exception as init_error:
+            error_str = str(init_error).lower()
+            if "timeout" in error_str or "expired" in error_str:
+                logger.warning(f"⚠️  MT5 initialization timed out: {init_error}")
+                logger.info("   Will attempt login anyway - sometimes login initializes MT5")
+            else:
+                logger.warning(f"⚠️  MT5 initialization error: {init_error}")
+                logger.info("   Will attempt login anyway - sometimes login initializes MT5")
+
         # Run login in executor with timeout to prevent hanging
         logger.info(f"Starting MT5 login attempt for login={login_id}, server={request.server}")
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mt5-login")

@@ -65,7 +65,22 @@ apt-get install -y \
     screen \
     python3-pip \
     python3-venv \
+    git \
     || echo "⚠️  Some packages may already be installed"
+
+# Install noVNC for web-based VNC access
+echo "   Installing noVNC for web-based VNC access..."
+if [ ! -d "/opt/noVNC" ]; then
+    cd /opt
+    git clone https://github.com/novnc/noVNC.git
+    cd noVNC
+    git clone https://github.com/novnc/websockify.git
+    chmod +x utils/novnc_proxy
+    echo "   ✅ noVNC installed"
+else
+    echo "   ✅ noVNC already installed"
+fi
+
 echo "✅ Dependencies installed"
 echo ""
 
@@ -106,6 +121,39 @@ if pgrep -x x11vnc > /dev/null; then
 else
     echo "   ⚠️  x11vnc failed to start (check /tmp/x11vnc.log)"
     echo "   Continuing anyway..."
+fi
+
+# Start noVNC web server for browser access
+echo "   Starting noVNC web server..."
+pkill -f "websockify.*6080" 2>/dev/null || true
+pkill -f "novnc" 2>/dev/null || true
+sleep 2
+
+if [ -d "/opt/noVNC" ]; then
+    cd /opt/noVNC
+    # Start websockify to bridge web to VNC
+    ./utils/novnc_proxy --vnc localhost:5900 --listen 6080 > /tmp/novnc.log 2>&1 &
+    sleep 3
+    
+    if pgrep -f "novnc_proxy\|websockify.*6080" > /dev/null; then
+        echo "   ✅ noVNC web server started on port 6080"
+        echo "   🌐 Web VNC accessible at: http://YOUR_SERVER_IP:6080/vnc.html"
+    else
+        echo "   ⚠️  noVNC failed to start (check /tmp/novnc.log)"
+        echo "   Trying alternative method..."
+        # Alternative: use websockify directly
+        if [ -d "/opt/noVNC/websockify" ]; then
+            cd /opt/noVNC/websockify
+            python3 websockify.py --web=/opt/noVNC --target-config=/dev/null 6080 localhost:5900 > /tmp/websockify.log 2>&1 &
+            sleep 3
+            if pgrep -f "websockify.*6080" > /dev/null; then
+                echo "   ✅ websockify started on port 6080"
+                echo "   🌐 Web VNC accessible at: http://YOUR_SERVER_IP:6080/vnc.html"
+            fi
+        fi
+    fi
+else
+    echo "   ⚠️  noVNC not installed, skipping web VNC setup"
 fi
 
 # Also try TigerVNC as alternative (non-blocking)

@@ -498,30 +498,51 @@ async def connect_account(
                 detail="MT5 login must be numeric for automation. Please verify account number.",
             )
 
-        # Ensure MT5 is initialized before attempting login
-        logger.info("🔄 Ensuring MT5 is initialized before login...")
+        # Try to initialize MT5, but don't fail if it times out
+        # Sometimes login() itself can initialize MT5 Terminal
+        logger.info("🔄 Attempting to initialize MT5 before login...")
         try:
             if not mt5.is_initialized():
                 logger.info("MT5 not initialized, calling initialize()...")
-                initialized = mt5.initialize()
-                if initialized:
-                    logger.info("✅ MT5 initialized successfully")
-                    import time
-                    time.sleep(2)  # Give MT5 a moment to be ready
-                else:
-                    error = mt5.last_error() if hasattr(mt5, 'last_error') else "Unknown error"
-                    logger.warning(f"⚠️  MT5 initialize() returned False: {error}")
-                    # Continue anyway - sometimes this is OK
+                # Use a shorter timeout for initialize() - if it times out, we'll try login anyway
+                def init_with_timeout():
+                    return mt5.initialize()
+                
+                executor_init = ThreadPoolExecutor(max_workers=1)
+                try:
+                    loop = asyncio.get_event_loop()
+                    initialized = await asyncio.wait_for(
+                        loop.run_in_executor(executor_init, init_with_timeout),
+                        timeout=10.0  # 10 second timeout for initialize
+                    )
+                    executor_init.shutdown(wait=True, timeout=2)
+                    
+                    if initialized:
+                        logger.info("✅ MT5 initialized successfully")
+                        import time
+                        time.sleep(2)  # Give MT5 a moment to be ready
+                    else:
+                        error = mt5.last_error() if hasattr(mt5, 'last_error') else "Unknown error"
+                        logger.warning(f"⚠️  MT5 initialize() returned False: {error}")
+                        logger.info("   Will attempt login anyway - login may initialize MT5")
+                except asyncio.TimeoutError:
+                    logger.warning("⚠️  MT5 initialize() timed out after 10s")
+                    logger.info("   Will attempt login anyway - login may initialize MT5")
+                    executor_init.shutdown(wait=False, cancel_futures=True)
+                except Exception as e:
+                    logger.warning(f"⚠️  MT5 initialize() error: {e}")
+                    logger.info("   Will attempt login anyway - login may initialize MT5")
+                    executor_init.shutdown(wait=False, cancel_futures=True)
             else:
                 logger.info("✅ MT5 already initialized")
         except Exception as init_error:
             error_str = str(init_error).lower()
             if "timeout" in error_str or "expired" in error_str:
-                logger.warning(f"⚠️  MT5 initialization timed out: {init_error}")
-                logger.info("   Will attempt login anyway - sometimes login initializes MT5")
+                logger.warning(f"⚠️  MT5 initialization check timed out: {init_error}")
+                logger.info("   Will attempt login anyway - login may initialize MT5")
             else:
-                logger.warning(f"⚠️  MT5 initialization error: {init_error}")
-                logger.info("   Will attempt login anyway - sometimes login initializes MT5")
+                logger.warning(f"⚠️  MT5 initialization check error: {init_error}")
+                logger.info("   Will attempt login anyway - login may initialize MT5")
 
         # Run login in executor with timeout to prevent hanging
         logger.info(f"Starting MT5 login attempt for login={login_id}, server={request.server}")

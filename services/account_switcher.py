@@ -1,6 +1,5 @@
 import logging
 import threading
-import signal
 from typing import Dict, Optional
 
 from fastapi import HTTPException, status
@@ -49,25 +48,14 @@ def ensure_account_session(
     with _LOCK:
         info = None
         try:
-            # Add timeout to prevent hanging - use signal-based timeout
-            import signal
-            
-            def timeout_handler(signum, frame):
-                raise TimeoutError("MT5 account_info() timed out")
-            
-            # Set alarm for 10 seconds
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(10)
-            
-            try:
-                info = mt5_module.account_info()
-            except TimeoutError:
-                logger.warning("MT5 account_info() timed out after 10s")
-                info = None
-            finally:
-                signal.alarm(0)  # Cancel alarm
+            # Try to get account info - if it times out, that's OK
+            info = mt5_module.account_info()
         except Exception as exc:
-            logger.warning("Failed to fetch MT5 account info: %s", exc)
+            error_str = str(exc).lower()
+            if "timeout" in error_str or "expired" in error_str or "result expired" in error_str:
+                logger.warning("MT5 account_info() timed out: %s", exc)
+            else:
+                logger.warning("Failed to fetch MT5 account info: %s", exc)
             info = None
 
         if info and str(info.login) == desired_login:
@@ -88,39 +76,26 @@ def ensure_account_session(
             )
 
         logger.info("Switching MT5 session to account %s (%s)", desired_login, server)
-        
-        # Add timeout to prevent hanging - use signal-based timeout
-        import signal
-        
-        def timeout_handler(signum, frame):
-            raise TimeoutError("MT5 login() timed out")
-        
-        # Set alarm for 30 seconds
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(30)
-        
         try:
             authorized = mt5_module.login(
                 login=int(desired_login),
                 password=password,
                 server=server,
             )
-        except TimeoutError:
-            logger.error("MT5 login() timed out after 30s for login=%s, server=%s", desired_login, server)
-            signal.alarm(0)  # Cancel alarm
-            raise HTTPException(
-                status_code=status.HTTP_408_REQUEST_TIMEOUT,
-                detail=f"MT5 login timed out. The server may be unreachable or the server name may be incorrect.",
-            )
         except Exception as exc:
-            logger.error("MT5 login error: %s", exc)
-            signal.alarm(0)  # Cancel alarm
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"MT5 login error: {str(exc)}",
-            )
-        finally:
-            signal.alarm(0)  # Cancel alarm
+            error_str = str(exc).lower()
+            if "timeout" in error_str or "expired" in error_str or "result expired" in error_str:
+                logger.error("MT5 login() timed out for login=%s, server=%s: %s", desired_login, server, exc)
+                raise HTTPException(
+                    status_code=status.HTTP_408_REQUEST_TIMEOUT,
+                    detail=f"MT5 login timed out. The server may be unreachable or the server name may be incorrect.",
+                )
+            else:
+                logger.error("MT5 login error: %s", exc)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"MT5 login error: {str(exc)}",
+                )
         
         if not authorized:
             error = getattr(mt5_module, "last_error", lambda: "Unknown error")()

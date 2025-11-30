@@ -1,144 +1,88 @@
 #!/bin/bash
-# Check MT5 connection and login if needed
+# Check if MT5 is logged in and log in if needed
 
-set -e
-
-echo "🔍 Checking MT5 Connection"
-echo "=========================="
+echo "🔍 Checking MT5 Login Status"
+echo "============================"
 echo ""
 
 cd /opt/mt5-api-bridge
 source venv/bin/activate
 
-# Check Docker container
-echo "[1/4] Checking Docker container..."
-if docker ps | grep -q mt5; then
-    echo "✅ Docker container is running"
-else
-    echo "❌ Docker container is not running"
-    echo "   Starting container..."
-    docker start mt5
-    sleep 10
-fi
-echo ""
-
-# Test RPyC connection
-echo "[2/4] Testing RPyC connection..."
-python3 <<PYEOF
+# Check if MT5 is accessible and logged in
+python3 <<'PYEOF'
 from mt5linux import MetaTrader5
 import sys
+import time
 
 try:
+    print("   Connecting to RPyC...")
     mt5 = MetaTrader5(host='localhost', port=8001)
+    print("   ✅ Connected to RPyC")
     
     # Try to initialize
-    if not mt5.initialize():
-        print("   ⚠️  MT5 not initialized")
-        sys.exit(1)
-    
-    # Check if logged in
-    account = mt5.account_info()
-    if account:
-        print(f"   ✅ MT5 is connected and logged in!")
-        print(f"      Account: {account.login}")
-        print(f"      Server: {account.server}")
-        print(f"      Balance: {account.balance}")
-        sys.exit(0)
-    else:
-        print("   ⚠️  MT5 initialized but not logged in")
-        sys.exit(1)
-        
-except Exception as e:
-    print(f"   ❌ Connection failed: {e}")
-    sys.exit(1)
-PYEOF
-
-CONNECTION_OK=$?
-echo ""
-
-if [ $CONNECTION_OK -ne 0 ]; then
-    echo "[3/4] MT5 not logged in - attempting login..."
-    echo "============================================="
-    
-    # MT5 Credentials
-    LOGIN=5042856355
-    PASSWORD="V!QzRxQ7"
-    SERVER="MetaQuotes-Demo"
-    
-    python3 <<PYEOF
-from mt5linux import MetaTrader5
-import time
-import sys
-
-try:
-    mt5 = MetaTrader5(host='localhost', port=8001)
-    
     print("   Initializing MT5...")
-    if not mt5.initialize():
-        print("   ❌ Failed to initialize MT5")
-        sys.exit(1)
-    
-    print(f"   Logging in to account {5042856355}...")
-    authorized = mt5.login(
-        login=5042856355,
-        password="V!QzRxQ7",
-        server="MetaQuotes-Demo"
-    )
-    
-    if not authorized:
+    if mt5.initialize():
+        print("   ✅ MT5 initialized")
+    else:
         error = mt5.last_error()
-        print(f"   ❌ Login failed: {error}")
-        sys.exit(1)
+        print(f"   ⚠️  Initialize returned False: {error}")
     
-    # Wait a moment
     time.sleep(2)
     
-    # Verify login
+    # Check if logged in
+    print("   Checking login status...")
     account = mt5.account_info()
-    if account and account.login == 5042856355:
-        print(f"   ✅ Login successful!")
+    
+    if account:
+        print(f"   ✅ MT5 is logged in!")
         print(f"      Account: {account.login}")
         print(f"      Server: {account.server}")
         print(f"      Balance: {account.balance}")
+        print(f"      Equity: {account.equity}")
         sys.exit(0)
     else:
-        print("   ⚠️  Login may have succeeded but account info not available yet")
-        print("   Wait 30 seconds and check again")
+        print("   ⚠️  MT5 is NOT logged in")
+        print("   terminal_info() check...")
+        terminal_info = mt5.terminal_info()
+        if terminal_info:
+            print(f"   ✅ Terminal info available (Build: {terminal_info.build})")
+            print("   But no account logged in")
+        else:
+            print("   ⚠️  terminal_info() also returns None")
+            print("   MT5 Terminal may need more time to initialize")
         sys.exit(1)
         
 except Exception as e:
-    print(f"   ❌ Error: {e}")
-    import traceback
-    traceback.print_exc()
+    error_str = str(e).lower()
+    if "timeout" in error_str or "expired" in error_str:
+        print(f"   ⚠️  Timeout: {e}")
+        print("   MT5 Terminal may still be initializing")
+    else:
+        print(f"   ❌ Error: {e}")
     sys.exit(1)
 PYEOF
 
-    LOGIN_OK=$?
+EXIT_CODE=$?
+
+echo ""
+
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "✅ MT5 is logged in and ready!"
     echo ""
-    
-    if [ $LOGIN_OK -eq 0 ]; then
-        echo "[4/4] ✅ MT5 is now connected and logged in!"
-    else
-        echo "[4/4] ⚠️  Login attempt completed but verification failed"
-        echo ""
-        echo "💡 Try accessing MT5 Terminal via VNC:"
-        echo "   http://147.182.206.223:3000"
-        echo "   Log in manually if needed"
-    fi
+    echo "📋 Next Steps:"
+    echo "   1. Test API: curl -X GET 'https://trade.trainflow.dev/api/v1/account/info' -H 'Authorization: Bearer YOUR_TOKEN'"
 else
-    echo "[3/4] ✅ MT5 is already connected"
-    echo "[4/4] ✅ No action needed"
+    echo "⚠️  MT5 is not logged in"
+    echo ""
+    echo "💡 To log in:"
+    echo "   1. Connect via VNC: vncserver :99"
+    echo "   2. Open MT5 Terminal GUI"
+    echo "   3. Log in to your account manually"
+    echo ""
+    echo "   OR use the API to connect an account:"
+    echo "   curl -X POST 'https://trade.trainflow.dev/api/v1/accounts/connect' \\"
+    echo "     -H 'Authorization: Bearer YOUR_TOKEN' \\"
+    echo "     -H 'Content-Type: application/json' \\"
+    echo "     -d '{\"account_name\": \"...\", \"login\": \"...\", \"password\": \"...\", \"server\": \"...\"}'"
+    echo ""
 fi
-
-echo ""
-echo "🔄 Restarting API service to reconnect..."
-systemctl restart mt5-api
-sleep 3
-
-echo ""
-echo "✅ Complete!"
-echo ""
-echo "📊 Check API status:"
-curl -s http://localhost:8000/health | python3 -m json.tool || echo "API may still be starting..."
-echo ""
-

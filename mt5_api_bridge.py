@@ -71,7 +71,26 @@ app = FastAPI(
 )
 
 # CORS - configure with your frontend domain
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "*")
+# Default origins if not set or if "*" is used
+if CORS_ORIGINS_ENV == "*":
+    CORS_ORIGINS = ["*"]  # Allow all origins
+else:
+    # Split by comma and strip whitespace
+    CORS_ORIGINS = [origin.strip() for origin in CORS_ORIGINS_ENV.split(",")]
+    # Always include trainflow.dev domains
+    default_origins = [
+        "https://www.trainflow.dev",
+        "https://trainflow.dev",
+        "http://localhost:3000",
+        "http://localhost:3001"
+    ]
+    for origin in default_origins:
+        if origin not in CORS_ORIGINS:
+            CORS_ORIGINS.append(origin)
+
+logger.info(f"CORS configured with origins: {CORS_ORIGINS}")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,

@@ -123,33 +123,45 @@ else
     echo "   Continuing anyway..."
 fi
 
-# Start noVNC web server for browser access
-echo "   Starting noVNC web server..."
-pkill -f "websockify.*6080" 2>/dev/null || true
-pkill -f "novnc" 2>/dev/null || true
+# Start noVNC web server for browser access (port 3000 to match Docker setup)
+echo "   Starting noVNC web server on port 3000..."
+pkill -f "websockify.*3000" 2>/dev/null || true
+pkill -f "novnc.*3000" 2>/dev/null || true
 sleep 2
 
 if [ -d "/opt/noVNC" ]; then
     cd /opt/noVNC
-    # Start websockify to bridge web to VNC
-    ./utils/novnc_proxy --vnc localhost:5900 --listen 6080 > /tmp/novnc.log 2>&1 &
-    sleep 3
-    
-    if pgrep -f "novnc_proxy\|websockify.*6080" > /dev/null; then
-        echo "   ✅ noVNC web server started on port 6080"
-        echo "   🌐 Web VNC accessible at: http://YOUR_SERVER_IP:6080/vnc.html"
-    else
-        echo "   ⚠️  noVNC failed to start (check /tmp/novnc.log)"
-        echo "   Trying alternative method..."
-        # Alternative: use websockify directly
-        if [ -d "/opt/noVNC/websockify" ]; then
-            cd /opt/noVNC/websockify
-            python3 websockify.py --web=/opt/noVNC --target-config=/dev/null 6080 localhost:5900 > /tmp/websockify.log 2>&1 &
+    # Start websockify to bridge web to VNC on port 3000 (matching Docker setup)
+    # Use websockify directly for better compatibility
+    if [ -d "/opt/noVNC/websockify" ]; then
+        cd /opt/noVNC/websockify
+        python3 websockify.py --web=/opt/noVNC --target-config=/dev/null 3000 localhost:5900 > /tmp/websockify.log 2>&1 &
+        sleep 3
+        if pgrep -f "websockify.*3000" > /dev/null; then
+            echo "   ✅ websockify started on port 3000"
+            echo "   🌐 Web VNC accessible at: http://YOUR_SERVER_IP:3000/vnc.html"
+        else
+            echo "   ⚠️  websockify failed to start (check /tmp/websockify.log)"
+            echo "   Trying novnc_proxy..."
+            cd /opt/noVNC
+            ./utils/novnc_proxy --vnc localhost:5900 --listen 3000 > /tmp/novnc.log 2>&1 &
             sleep 3
-            if pgrep -f "websockify.*6080" > /dev/null; then
-                echo "   ✅ websockify started on port 6080"
-                echo "   🌐 Web VNC accessible at: http://YOUR_SERVER_IP:6080/vnc.html"
+            if pgrep -f "novnc_proxy.*3000\|websockify.*3000" > /dev/null; then
+                echo "   ✅ noVNC web server started on port 3000"
+                echo "   🌐 Web VNC accessible at: http://YOUR_SERVER_IP:3000/vnc.html"
+            else
+                echo "   ⚠️  noVNC failed to start (check /tmp/novnc.log)"
             fi
+        fi
+    else
+        echo "   ⚠️  websockify not found, trying novnc_proxy..."
+        ./utils/novnc_proxy --vnc localhost:5900 --listen 3000 > /tmp/novnc.log 2>&1 &
+        sleep 3
+        if pgrep -f "novnc_proxy.*3000" > /dev/null; then
+            echo "   ✅ noVNC web server started on port 3000"
+            echo "   🌐 Web VNC accessible at: http://YOUR_SERVER_IP:3000/vnc.html"
+        else
+            echo "   ⚠️  noVNC failed to start (check /tmp/novnc.log)"
         fi
     fi
 else
@@ -281,11 +293,11 @@ echo ""
 echo "🌐 VNC Access:"
 echo "   - x11vnc (VNC client): YOUR_SERVER_IP:5900 (if running)"
 echo "   - TigerVNC (VNC client): YOUR_SERVER_IP:5901 (if running)"
-echo "   - noVNC (Web browser): http://YOUR_SERVER_IP:6080/vnc.html (if running)"
+echo "   - noVNC (Web browser): http://YOUR_SERVER_IP:3000/vnc.html (if running)"
 echo ""
 echo "📋 Next Steps:"
 echo "   1. Wait 2-3 minutes for MT5 Terminal to fully initialize"
-echo "   2. Access VNC in browser: http://YOUR_SERVER_IP:6080/vnc.html"
+echo "   2. Access VNC in browser: http://YOUR_SERVER_IP:3000/vnc.html"
 echo "   3. Or use VNC client: vncviewer YOUR_SERVER_IP:5900"
 echo "   3. Test API: curl http://localhost:8000/health"
 echo "   4. Connect account: curl -X POST 'https://trade.trainflow.dev/api/v1/accounts/connect' ..."
@@ -313,5 +325,6 @@ echo "   - Windows: RealVNC Viewer, TightVNC, or UltraVNC"
 echo "   - Linux: Remmina, TigerVNC Viewer, or vinagre"
 echo ""
 echo "   Connect to: YOUR_SERVER_IP:5900 (x11vnc) or YOUR_SERVER_IP:5901 (TigerVNC)"
+echo "   Or use web browser: http://YOUR_SERVER_IP:3000/vnc.html"
 echo "   No password is set (you can add one later with: vncpasswd)"
 echo ""

@@ -656,6 +656,8 @@ async def connect_account(
             # Provide more helpful error messages
             if "invalid" in str(error).lower() or "wrong" in str(error).lower():
                 error_msg += f" Please verify login ({login_id}), password, and server name ('{request.server}') are correct."
+            elif "no ipc connection" in str(error).lower() or "ipc" in str(error).lower():
+                error_msg += " MT5 Terminal's IPC connection is not ready. Please: 1) Access VNC (http://YOUR_SERVER_IP:3000/vnc.html), 2) Log in to MT5 Terminal manually, 3) Wait 30 seconds, then try connecting via API again."
             raise HTTPException(status_code=400, detail=error_msg)
 
         account_info = mt5.account_info()

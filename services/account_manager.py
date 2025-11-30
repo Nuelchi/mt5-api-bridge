@@ -309,18 +309,21 @@ def delete_account(user_id: str, account_id: str):
 def get_default_account(user_id: str) -> Optional[AccountResponse]:
     client = _require_supabase()
     try:
+        # Use maybe_single() instead of single() to handle cases where no default account exists
+        # This prevents 406 errors when querying Supabase
         response = (
             client.table(MT5_ACCOUNTS_TABLE)
             .select("*")
             .eq("user_id", user_id)
             .eq("is_active", True)
             .eq("is_default", True)
-            .single()
+            .maybe_single()
             .execute()
         )
         if not response.data:
             return None
         return _map_account(response.data)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to get default account (may not exist): %s", exc)
         return None
 

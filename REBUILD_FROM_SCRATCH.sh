@@ -108,13 +108,18 @@ else
     echo "   Continuing anyway..."
 fi
 
-# Also try TigerVNC as alternative
+# Also try TigerVNC as alternative (non-blocking)
 if command -v vncserver > /dev/null; then
     echo "   Setting up TigerVNC as alternative..."
     vncserver -kill :1 2>/dev/null || true
-    vncserver :1 -geometry 1024x768 -depth 24 -localhost no > /tmp/tigervnc.log 2>&1 || true
-    if pgrep -f "vncserver.*:1" > /dev/null; then
+    sleep 2
+    # Start TigerVNC in background, don't wait for it
+    vncserver :1 -geometry 1024x768 -depth 24 -localhost no > /tmp/tigervnc.log 2>&1 &
+    sleep 3
+    if pgrep -f "Xvnc.*:1" > /dev/null || pgrep -f "vncserver.*:1" > /dev/null; then
         echo "   ✅ TigerVNC started on :1 (port 5901)"
+    else
+        echo "   ⚠️  TigerVNC failed to start (check /tmp/tigervnc.log)"
     fi
 fi
 
@@ -242,3 +247,21 @@ echo "   API: journalctl -u mt5-api -f"
 echo "   VNC: tail -f /tmp/x11vnc.log"
 echo ""
 
+
+# Add VNC status check at the end
+echo ""
+echo "🔍 VNC Status Check..."
+echo "====================="
+echo "   x11vnc: $(pgrep -x x11vnc > /dev/null && echo '✅ Running on port 5900' || echo '❌ Not running')"
+echo "   TigerVNC: $(pgrep -f 'Xvnc.*:1' > /dev/null && echo '✅ Running on port 5901' || echo '❌ Not running')"
+echo ""
+echo "📡 VNC Access Instructions:"
+echo "   ⚠️  VNC does NOT work in a web browser!"
+echo "   You need a VNC client application:"
+echo "   - macOS: Built-in Screen Sharing or RealVNC Viewer"
+echo "   - Windows: RealVNC Viewer, TightVNC, or UltraVNC"
+echo "   - Linux: Remmina, TigerVNC Viewer, or vinagre"
+echo ""
+echo "   Connect to: YOUR_SERVER_IP:5900 (x11vnc) or YOUR_SERVER_IP:5901 (TigerVNC)"
+echo "   No password is set (you can add one later with: vncpasswd)"
+echo ""

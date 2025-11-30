@@ -502,7 +502,8 @@ async def connect_account(
         # Sometimes login() itself can initialize MT5 Terminal
         logger.info("🔄 Attempting to initialize MT5 before login...")
         try:
-            if not mt5.is_initialized():
+            # Check if is_initialized method exists (mt5linux doesn't have it)
+            if hasattr(mt5, 'is_initialized') and not mt5.is_initialized():
                 logger.info("MT5 not initialized, calling initialize()...")
                 # Use a shorter timeout for initialize() - if it times out, we'll try login anyway
                 def init_with_timeout():

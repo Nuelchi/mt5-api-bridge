@@ -337,15 +337,16 @@ def get_mt5():
     # Try to initialize if not already initialized (lazy initialization)
     if MT5_LIBRARY == "mt5linux" and MT5_INSTANCE:
         try:
-            # Try to get terminal info - if it works, MT5 is initialized
-            terminal_info = MT5_INSTANCE.terminal_info()
-            if terminal_info is None:
-                # Try to initialize
+            # Try to initialize first - this is required for MT5 to work
+            if not MT5_INSTANCE.is_initialized():
                 logger.info("🔄 Attempting to initialize MT5 (lazy init)...")
                 try:
                     initialized = MT5_INSTANCE.initialize()
                     if initialized:
                         logger.info("✅ MT5 initialized successfully (lazy init)")
+                        # Wait a moment for MT5 to be ready
+                        import time
+                        time.sleep(1)
                     else:
                         error = MT5_INSTANCE.last_error() if hasattr(MT5_INSTANCE, 'last_error') else "Unknown error"
                         logger.warning(f"⚠️  MT5 initialize() returned False: {error}")
@@ -357,6 +358,14 @@ def get_mt5():
                         logger.info("   MT5 Terminal may still be initializing. Will retry on next request.")
                     else:
                         logger.warning(f"⚠️  MT5 initialization error: {e}")
+            else:
+                # Already initialized, check if we can get terminal info
+                try:
+                    terminal_info = MT5_INSTANCE.terminal_info()
+                    if terminal_info is None:
+                        logger.debug("MT5 initialized but terminal_info() is None - may need login")
+                except Exception as e:
+                    logger.debug(f"Could not get terminal_info: {e}")
         except Exception as e:
             # If terminal_info() fails, that's OK - MT5 might not be ready
             if "result expired" in str(e) or "timeout" in str(e).lower():

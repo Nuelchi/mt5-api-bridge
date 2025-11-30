@@ -100,18 +100,42 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
     RETRY=$((RETRY + 1))
     echo "   Attempt $RETRY/$MAX_RETRIES..."
     
+    # Kill any existing screen session first
+    screen -S mt5_terminal -X quit 2>/dev/null || true
+    sleep 2
+    
     # Try starting with screen to keep it alive
     screen -dmS mt5_terminal bash -c "export DISPLAY=:99 && export WINEPREFIX=\$HOME/.wine && cd /opt/mt5-api-bridge && wine \"\$HOME/.wine/drive_c/Program Files/MetaTrader 5/terminal64.exe\" 2>&1 | tee /tmp/mt5_screen.log"
     
-    sleep 15
+    # Wait longer and check multiple times
+    echo "   Waiting 20 seconds and checking if process stays alive..."
+    sleep 20
     
+    # Check if process is running
     if pgrep -f "terminal64.exe" > /dev/null; then
-        echo "✅ MT5 Terminal started successfully in screen session!"
-        screen -ls | grep mt5_terminal
-        echo ""
-        echo "   To view the screen: screen -r mt5_terminal"
-        echo "   To detach: Ctrl+A then D"
-        exit 0
+        # Wait another 10 seconds and check again to ensure it's stable
+        sleep 10
+        if pgrep -f "terminal64.exe" > /dev/null; then
+            echo "✅ MT5 Terminal started successfully in screen session!"
+            echo "   Process verified stable after 30 seconds"
+            pgrep -f "terminal64.exe" | while read pid; do
+                echo "   PID: $pid"
+                ps -p $pid -o lstart=,etime= | head -1
+            done
+            screen -ls | grep mt5_terminal || echo "   (Screen session may have detached)"
+            echo ""
+            echo "   To view the screen: screen -r mt5_terminal"
+            echo "   To detach: Ctrl+A then D"
+            exit 0
+        else
+            echo "   Process started but crashed after 20 seconds"
+        fi
+    else
+        echo "   Process failed to start or crashed immediately"
+        if [ -f /tmp/mt5_screen.log ]; then
+            echo "   Last 10 lines of screen log:"
+            tail -10 /tmp/mt5_screen.log
+        fi
     fi
     
     echo "   Attempt $RETRY failed, waiting 5 seconds..."
@@ -136,6 +160,15 @@ echo ""
 
 echo "📋 Last error from attempt 3:"
 tail -10 /tmp/mt5_attempt3.log 2>/dev/null || echo "   No log available"
+echo ""
+
+echo "📋 Screen session log (if exists):"
+if [ -f /tmp/mt5_screen.log ]; then
+    echo "   Last 30 lines:"
+    tail -30 /tmp/mt5_screen.log
+else
+    echo "   No screen log found"
+fi
 echo ""
 
 echo "📋 System Information:"

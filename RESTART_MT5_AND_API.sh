@@ -48,7 +48,7 @@ else
 fi
 echo ""
 
-# Step 6: Start MT5 Terminal
+# Step 6: Start MT5 Terminal (using screen method that works)
 echo "[6/6] Starting MT5 Terminal..."
 export WINEPREFIX="$HOME/.wine"
 export DISPLAY=:99
@@ -60,18 +60,26 @@ if [ ! -f "$MT5FILE" ]; then
     exit 1
 fi
 
-DISPLAY=:99 WINEDLLOVERRIDES="mscoree,mshtml=" wine "$MT5FILE" >/dev/null 2>&1 &
-MT5_PID=$!
-echo "   MT5 Terminal started (PID: $MT5_PID)"
-echo "   Waiting 15 seconds for MT5 to initialize..."
-sleep 15
+# Kill any existing screen session
+screen -S mt5_terminal -X quit 2>/dev/null || true
+sleep 2
+
+# Start MT5 in a screen session (this method works better than direct start)
+echo "   Starting MT5 Terminal in screen session..."
+screen -dmS mt5_terminal bash -c "export DISPLAY=:99 && export WINEPREFIX=\$HOME/.wine && cd /opt/mt5-api-bridge && wine \"\$HOME/.wine/drive_c/Program Files/MetaTrader 5/terminal64.exe\" 2>&1 | tee /tmp/mt5_screen.log"
+
+echo "   Waiting 20 seconds for MT5 to initialize..."
+sleep 20
 
 # Verify MT5 is running
 if pgrep -f "terminal64.exe\|terminal.exe" > /dev/null; then
-    echo "✅ MT5 Terminal is running"
+    echo "✅ MT5 Terminal is running in screen session"
+    screen -ls | grep mt5_terminal || echo "   (Screen session may have detached)"
+    pgrep -f "terminal64.exe\|terminal.exe" | head -1 | xargs ps -p | tail -1
 else
     echo "⚠️  MT5 Terminal may have failed to start"
-    echo "   Check manually: ps aux | grep terminal"
+    echo "   Check screen log: tail -50 /tmp/mt5_screen.log"
+    echo "   Or try: ./FIX_MT5_CRASH.sh"
 fi
 echo ""
 

@@ -72,7 +72,7 @@ def _call_encryption_service(path: str, payload: Dict[str, Any]) -> Optional[str
             url,
             json=payload,
             headers={"X-Service-Key": ENCRYPTION_SERVICE_KEY},
-            timeout=10.0,
+            timeout=30.0,  # Increased from 10s to 30s for slow backend responses
         )
         if response.status_code == 200:
             data = response.json()
@@ -85,7 +85,7 @@ def _call_encryption_service(path: str, payload: Dict[str, Any]) -> Optional[str
         else:
             logger.warning("Encryption service responded with %s: %s", response.status_code, response.text[:500])
     except httpx.TimeoutException:
-        logger.error("Encryption service request timed out after 10s: %s", url)
+        logger.error("Encryption service request timed out after 30s: %s", url)
     except httpx.ConnectError as exc:
         logger.error("Encryption service connection failed: %s - Is the backend running at %s?", exc, BACKEND_API_BASE)
     except Exception as exc:
@@ -309,20 +309,30 @@ def delete_account(user_id: str, account_id: str):
 def get_default_account(user_id: str) -> Optional[AccountResponse]:
     client = _require_supabase()
     try:
-        # Use maybe_single() instead of single() to handle cases where no default account exists
-        # This prevents 406 errors when querying Supabase
+        # First try to get default account with explicit boolean handling
+        # Supabase sometimes has issues with boolean queries, so we'll fetch all active accounts
+        # and filter in Python if needed
         response = (
             client.table(MT5_ACCOUNTS_TABLE)
             .select("*")
             .eq("user_id", user_id)
             .eq("is_active", True)
-            .eq("is_default", True)
-            .maybe_single()
             .execute()
         )
+        
         if not response.data:
             return None
-        return _map_account(response.data)
+        
+        # Find default account in Python to avoid boolean query issues
+        for account in response.data:
+            if account.get("is_default") is True:
+                return _map_account(account)
+        
+        # If no default account, return the first active account
+        if response.data:
+            return _map_account(response.data[0])
+        
+        return None
     except Exception as exc:
         logger.warning("Failed to get default account (may not exist): %s", exc)
         return None

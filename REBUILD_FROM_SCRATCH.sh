@@ -210,19 +210,76 @@ echo ""
 echo "[7/8] Checking MT5 Terminal installation..."
 echo "=========================================="
 MT5FILE="$HOME/.wine/drive_c/Program Files/MetaTrader 5/terminal64.exe"
+MT5SETUP_URL="https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe"
 
 if [ ! -f "$MT5FILE" ]; then
     echo "   ⚠️  MT5 Terminal not found at: $MT5FILE"
     echo ""
-    echo "   📥 To install MT5 Terminal:"
-    echo "      1. Download MT5 installer: wget https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe"
-    echo "      2. Install: wine mt5setup.exe"
-    echo "      3. Or use your existing installation method"
+    echo "   📥 Installing MT5 Terminal..."
+    echo "   (This may take 5-10 minutes)"
     echo ""
-    echo "   For now, continuing without MT5 Terminal..."
-    echo "   You can install it later and restart services"
+    
+    # Ensure Xvfb is running
+    if ! pgrep -x Xvfb > /dev/null; then
+        echo "   Starting virtual display..."
+        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+        sleep 2
+    fi
+    export DISPLAY=:99
+    
+    # Download MT5 installer
+    echo "   Downloading MT5 installer..."
+    cd /tmp
+    if [ ! -f "mt5setup.exe" ]; then
+        wget -q --show-progress -O mt5setup.exe "$MT5SETUP_URL" || {
+            echo "   ⚠️  Download failed, trying alternative method..."
+            curl -L -o mt5setup.exe "$MT5SETUP_URL" || {
+                echo "   ❌ Failed to download MT5 installer"
+                echo "   Please download manually and install"
+                echo "   Continuing without MT5 Terminal..."
+                MT5_INSTALLED=false
+            }
+        }
+    fi
+    
+    if [ -f "/tmp/mt5setup.exe" ]; then
+        echo "   Installing MT5 Terminal (this may take 5-10 minutes)..."
+        echo "   Please wait, installation is in progress..."
+        
+        # Install MT5 with auto mode
+        DISPLAY=:99 WINEDLLOVERRIDES="mscoree,mshtml=" timeout 600 wine /tmp/mt5setup.exe /auto >/dev/null 2>&1 || {
+            echo "   ⚠️  Auto install failed, trying interactive..."
+            DISPLAY=:99 WINEDLLOVERRIDES="mscoree,mshtml=" wine /tmp/mt5setup.exe >/dev/null 2>&1 &
+            echo "   Installation started in background..."
+        }
+        
+        # Wait for installation (check every 10 seconds, up to 10 minutes)
+        echo "   Waiting for installation to complete..."
+        for i in {1..60}; do
+            sleep 10
+            if [ -f "$MT5FILE" ]; then
+                echo "   ✅ MT5 Terminal installed successfully!"
+                rm -f /tmp/mt5setup.exe
+                MT5_INSTALLED=true
+                break
+            fi
+            if [ $((i % 6)) -eq 0 ]; then
+                echo "   Still installing... ($((i*10))s elapsed)"
+            fi
+        done
+        
+        if [ ! -f "$MT5FILE" ]; then
+            echo "   ⚠️  Installation may still be in progress"
+            echo "   Check manually: ls -la \"$MT5FILE\""
+            echo "   If not found, you may need to install manually via VNC"
+            MT5_INSTALLED=false
+        fi
+    else
+        MT5_INSTALLED=false
+    fi
 else
     echo "   ✅ MT5 Terminal found"
+    MT5_INSTALLED=true
 fi
 echo ""
 

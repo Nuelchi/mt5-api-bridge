@@ -71,26 +71,7 @@ app = FastAPI(
 )
 
 # CORS - configure with your frontend domain
-CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "*")
-# Default origins if not set or if "*" is used
-if CORS_ORIGINS_ENV == "*":
-    CORS_ORIGINS = ["*"]  # Allow all origins
-else:
-    # Split by comma and strip whitespace
-    CORS_ORIGINS = [origin.strip() for origin in CORS_ORIGINS_ENV.split(",")]
-    # Always include trainflow.dev domains
-    default_origins = [
-        "https://www.trainflow.dev",
-        "https://trainflow.dev",
-        "http://localhost:3000",
-        "http://localhost:3001"
-    ]
-    for origin in default_origins:
-        if origin not in CORS_ORIGINS:
-            CORS_ORIGINS.append(origin)
-
-logger.info(f"CORS configured with origins: {CORS_ORIGINS}")
-
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -263,7 +244,7 @@ class TradeRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup():
-    """Initialize MT5 on startup"""
+    """Initialize MT5 on startup - with retry logic"""
     global MT5_INSTANCE
     
     logger.info("🚀 Starting MT5 API Bridge")
@@ -275,70 +256,46 @@ async def startup():
         return
     
     # Initialize MT5 connection based on library type
-    try:
-        if MT5_LIBRARY == "mt5linux":
-            # mt5linux uses RPC - connect to running MT5 terminal
-            logger.info("🔌 Connecting to MT5 Terminal via RPC...")
-            logger.info("   Note: MT5 Terminal must be running with RPC server active")
-            
-            # Get RPC connection settings from environment
-            rpc_host = os.getenv("MT5_RPC_HOST", "localhost")
-            rpc_port = int(os.getenv("MT5_RPC_PORT", "8001"))  # Docker uses 8001
-            
-            try:
-                MT5_INSTANCE = MetaTrader5(host=rpc_host, port=rpc_port)
-                logger.info(f"✅ Created MT5 instance for {rpc_host}:{rpc_port}")
+    if MT5_LIBRARY == "mt5linux":
+        # mt5linux uses RPC - connect to running MT5 terminal
+        logger.info("🔌 Connecting to MT5 Terminal via RPC...")
+        logger.info("   Note: MT5 Terminal must be running with RPC server active")
+        
+        # Get RPC connection settings from environment
+        rpc_host = os.getenv("MT5_RPC_HOST", "localhost")
+        rpc_port = int(os.getenv("MT5_RPC_PORT", "8001"))
+        
+        # Create MT5 instance (don't initialize yet - do lazy initialization)
+        try:
+            MT5_INSTANCE = MetaTrader5(host=rpc_host, port=rpc_port)
+            logger.info(f"✅ Created MT5 instance for {rpc_host}:{rpc_port}")
+            logger.info("   MT5 will be initialized on first use (lazy initialization)")
+            logger.info("   This allows the API to start even if MT5 Terminal isn't ready yet")
+        except Exception as e:
+            logger.warning(f"⚠️  Could not create MT5 instance: {e}")
+            logger.info("   Will retry on first API call")
+            MT5_INSTANCE = None
                 
-                # Initialize MT5 connection
-                logger.info("   Initializing MT5 connection...")
-                if not MT5_INSTANCE.initialize():
-                    error = MT5_INSTANCE.last_error() if hasattr(MT5_INSTANCE, 'last_error') else "Unknown error"
-                    logger.warning(f"⚠️  MT5 initialize() returned False: {error}")
-                    logger.info("   MT5 Terminal may not be logged in yet")
-                else:
-                    logger.info("   ✅ MT5 initialized successfully")
-                
-                # Test connection
-                try:
-                    account = MT5_INSTANCE.account_info()
-                    if account:
-                        logger.info(f"✅ MT5 connection verified - Account: {account.login}")
-                    else:
-                        logger.warning("⚠️  Connected but account_info() returned None")
-                        logger.info("   MT5 Terminal may not be logged in yet")
-                except Exception as e:
-                    logger.warning(f"⚠️  Connection test failed: {e}")
-                    logger.info("   MT5 Terminal may not be logged in yet")
-                    
-            except ConnectionRefusedError:
-                logger.error("❌ Connection refused - MT5 Terminal not running or RPC server not active")
-                logger.info("   Start MT5 Terminal and ensure RPC server EA is running")
-                MT5_INSTANCE = None
-            except Exception as e:
-                logger.error(f"❌ Failed to connect to MT5: {e}")
-                MT5_INSTANCE = None
-                
-        elif MT5_LIBRARY == "MetaTrader5":
-            # Windows MetaTrader5 library - direct connection
-            logger.info("🔌 Initializing MT5 (Windows library)...")
+    elif MT5_LIBRARY == "MetaTrader5":
+        # Windows MetaTrader5 library - direct connection
+        logger.info("🔌 Initializing MT5 (Windows library)...")
+        try:
             if hasattr(mt5_module, 'initialize'):
                 if mt5_module.initialize():
                     MT5_INSTANCE = mt5_module
                     logger.info("✅ MT5 initialized successfully")
                 else:
                     error = mt5_module.last_error()
-                    logger.error(f"❌ MT5 initialization failed: {error}")
+                    logger.warning(f"⚠️  MT5 initialization returned False: {error}")
+                    logger.info("   Will retry on first API call")
                     MT5_INSTANCE = None
             else:
                 MT5_INSTANCE = mt5_module
                 logger.info("✅ MT5 library loaded")
-    except Exception as e:
-        logger.error(f"❌ MT5 initialization error: {e}")
-        MT5_INSTANCE = None
-    except Exception as e:
-        logger.error(f"❌ MT5 initialization error: {e}")
-        MT5_INSTANCE = None
-        return
+        except Exception as e:
+            logger.warning(f"⚠️  MT5 initialization error: {e}")
+            logger.info("   Will retry on first API call")
+            MT5_INSTANCE = None
     
 @app.on_event("shutdown")
 async def shutdown():
@@ -351,9 +308,63 @@ async def shutdown():
 
 # Helper function to get MT5 instance or raise error
 def get_mt5():
-    """Get MT5 instance, raise error if not available"""
-    if not MT5_AVAILABLE or MT5_INSTANCE is None:
-        raise HTTPException(status_code=503, detail="MT5 not connected. Ensure MT5 Terminal is running with RPC server active.")
+    """Get MT5 instance with lazy initialization and retry logic"""
+    global MT5_INSTANCE
+    
+    if not MT5_AVAILABLE:
+        raise HTTPException(status_code=503, detail="MT5 library not available")
+    
+    # If instance doesn't exist, try to create it
+    if MT5_INSTANCE is None:
+        if MT5_LIBRARY == "mt5linux":
+            rpc_host = os.getenv("MT5_RPC_HOST", "localhost")
+            rpc_port = int(os.getenv("MT5_RPC_PORT", "8001"))
+            try:
+                MT5_INSTANCE = MetaTrader5(host=rpc_host, port=rpc_port)
+                logger.info(f"✅ Created MT5 instance for {rpc_host}:{rpc_port}")
+            except Exception as e:
+                logger.error(f"❌ Failed to create MT5 instance: {e}")
+                raise HTTPException(
+                    status_code=503,
+                    detail="MT5 not connected. Ensure MT5 Terminal is running with RPC server active."
+                )
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="MT5 not connected. Ensure MT5 Terminal is running with RPC server active."
+            )
+    
+    # Try to initialize if not already initialized (lazy initialization)
+    if MT5_LIBRARY == "mt5linux" and MT5_INSTANCE:
+        try:
+            # Try to get terminal info - if it works, MT5 is initialized
+            terminal_info = MT5_INSTANCE.terminal_info()
+            if terminal_info is None:
+                # Try to initialize
+                logger.info("🔄 Attempting to initialize MT5 (lazy init)...")
+                try:
+                    initialized = MT5_INSTANCE.initialize()
+                    if initialized:
+                        logger.info("✅ MT5 initialized successfully (lazy init)")
+                    else:
+                        error = MT5_INSTANCE.last_error() if hasattr(MT5_INSTANCE, 'last_error') else "Unknown error"
+                        logger.warning(f"⚠️  MT5 initialize() returned False: {error}")
+                        # Don't fail - allow API to continue, MT5 might not be logged in yet
+                except Exception as e:
+                    # If initialization times out, that's OK - MT5 might not be ready
+                    if "result expired" in str(e) or "timeout" in str(e).lower():
+                        logger.warning(f"⚠️  MT5 initialization timed out: {e}")
+                        logger.info("   MT5 Terminal may still be initializing. Will retry on next request.")
+                    else:
+                        logger.warning(f"⚠️  MT5 initialization error: {e}")
+        except Exception as e:
+            # If terminal_info() fails, that's OK - MT5 might not be ready
+            if "result expired" in str(e) or "timeout" in str(e).lower():
+                logger.warning(f"⚠️  MT5 connection timed out: {e}")
+                logger.info("   MT5 Terminal may still be initializing. Will retry on next request.")
+            else:
+                logger.debug(f"MT5 connection check: {e}")
+    
     return MT5_INSTANCE
 
 # Helper to get MT5 constants (for timeframe, order types, etc.)

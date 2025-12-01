@@ -60,36 +60,74 @@ def _run_rpc(function: str, payload: Dict[str, Any]) -> Optional[str]:
         return None
 
 
-def _call_encryption_service(path: str, payload: Dict[str, Any]) -> Optional[str]:
+def _call_encryption_service(path: str, payload: Dict[str, Any], retries: int = 2) -> Optional[str]:
     if not BACKEND_API_BASE or not ENCRYPTION_SERVICE_KEY:
         logger.debug("Encryption service not configured: BACKEND_API_BASE=%s, ENCRYPTION_SERVICE_KEY=%s", 
                     bool(BACKEND_API_BASE), bool(ENCRYPTION_SERVICE_KEY))
         return None
     url = f"{BACKEND_API_BASE}/api/v1/accounts/{path}"
-    try:
-        logger.debug("Calling encryption service: %s", url)
-        response = httpx.post(
-            url,
-            json=payload,
-            headers={"X-Service-Key": ENCRYPTION_SERVICE_KEY},
-            timeout=10.0,
-        )
-        if response.status_code == 200:
-            data = response.json()
-            result = data.get("encrypted") if path == "encrypt" else data.get("password")
-            if result:
-                logger.debug("Encryption service returned result")
-                return result
+    
+    # Render free tier can take 30-60s to cold start, so use longer timeout
+    timeout = 60.0
+    
+    for attempt in range(retries + 1):
+        try:
+            if attempt > 0:
+                logger.info(f"Retrying encryption service call (attempt {attempt + 1}/{retries + 1}): {url}")
             else:
-                logger.warning("Encryption service returned 200 but no result in response: %s", data)
-        else:
-            logger.warning("Encryption service responded with %s: %s", response.status_code, response.text[:500])
-    except httpx.TimeoutException:
-        logger.error("Encryption service request timed out after 10s: %s", url)
-    except httpx.ConnectError as exc:
-        logger.error("Encryption service connection failed: %s - Is the backend running at %s?", exc, BACKEND_API_BASE)
-    except Exception as exc:
-        logger.error("Encryption service request failed: %s", exc, exc_info=True)
+                logger.debug("Calling encryption service: %s", url)
+            
+            response = httpx.post(
+                url,
+                json=payload,
+                headers={"X-Service-Key": ENCRYPTION_SERVICE_KEY},
+                timeout=timeout,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                result = data.get("encrypted") if path == "encrypt" else data.get("password")
+                if result:
+                    logger.debug("Encryption service returned result")
+                    return result
+                else:
+                    logger.warning("Encryption service returned 200 but no result in response: %s", data)
+            elif response.status_code == 503:
+                # Backend might be starting up, wait and retry
+                if attempt < retries:
+                    wait_time = (attempt + 1) * 5
+                    logger.info(f"Backend service unavailable (503), waiting {wait_time}s before retry...")
+                    import time
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.error("Encryption service unavailable after retries: %s", url)
+            else:
+                logger.warning("Encryption service responded with %s: %s", response.status_code, response.text[:500])
+        except httpx.TimeoutException:
+            if attempt < retries:
+                wait_time = (attempt + 1) * 5
+                logger.warning(f"Encryption service request timed out after {timeout}s, waiting {wait_time}s before retry...")
+                import time
+                time.sleep(wait_time)
+                continue
+            else:
+                logger.error(f"Encryption service request timed out after {timeout}s (final attempt): {url}")
+        except httpx.ConnectError as exc:
+            if attempt < retries:
+                wait_time = (attempt + 1) * 5
+                logger.warning(f"Encryption service connection failed, waiting {wait_time}s before retry: {exc}")
+                import time
+                time.sleep(wait_time)
+                continue
+            else:
+                logger.error("Encryption service connection failed: %s - Is the backend running at %s?", exc, BACKEND_API_BASE)
+        except Exception as exc:
+            logger.error("Encryption service request failed: %s", exc, exc_info=True)
+            if attempt < retries:
+                import time
+                time.sleep((attempt + 1) * 2)
+                continue
+    
     return None
 
 

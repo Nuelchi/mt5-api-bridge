@@ -5,6 +5,7 @@ python-dotenv==1.0.0
 httpx>=0.24.0,<0.25.0
 pydantic==2.5.0
 PyJWT>=2.8.0
+cryptography>=41.0.0
 
 # MT5 Library (install one based on your system)
 # For Linux VPS:

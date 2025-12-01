@@ -19,6 +19,7 @@ from models.account_models import (
     AccountResponse,
     AccountUpdateRequest,
 )
+from services.local_encryption import encrypt_password as local_encrypt, decrypt_password as local_decrypt, is_available as local_encryption_available
 
 logger = logging.getLogger(__name__)
 
@@ -135,15 +136,30 @@ def encrypt_password(password: str) -> str:
     if not password:
         raise HTTPException(status_code=400, detail="Password is required")
 
+    # Try backend encryption service first
     encrypted = _call_encryption_service("encrypt", {"password": password})
     if encrypted:
         return encrypted
 
+    # Try Supabase RPC
     encrypted = _run_rpc(ENCRYPT_RPC, {"password": password})
     if encrypted:
         return encrypted
 
-    raise HTTPException(status_code=500, detail="Failed to encrypt MT5 password")
+    # Final fallback: local encryption (if configured)
+    if local_encryption_available():
+        logger.info("Using local encryption fallback (backend and RPC unavailable)")
+        encrypted = local_encrypt(password)
+        if encrypted:
+            return encrypted
+        logger.warning("Local encryption failed")
+    else:
+        logger.warning("Local encryption not available (MT5_ENCRYPTION_KEY not set)")
+
+    raise HTTPException(
+        status_code=500,
+        detail="Failed to encrypt MT5 password. All encryption methods failed: backend service, Supabase RPC, and local encryption."
+    )
 
 
 def decrypt_password(encrypted: str) -> str:
@@ -169,11 +185,23 @@ def decrypt_password(encrypted: str) -> str:
         return decrypted
     logger.warning("Supabase RPC decrypt_password failed or returned no result")
 
-    # Both methods failed - provide helpful error
-    error_detail = "Failed to decrypt MT5 password. "
+    # Final fallback: local decryption (if configured)
+    if local_encryption_available():
+        logger.info("Attempting local decryption fallback")
+        decrypted = local_decrypt(encrypted)
+        if decrypted:
+            logger.info("Successfully decrypted via local encryption")
+            return decrypted
+        logger.warning("Local decryption failed")
+    else:
+        logger.warning("Local decryption not available (MT5_ENCRYPTION_KEY not set)")
+
+    # All methods failed - provide helpful error
+    error_detail = "Failed to decrypt MT5 password. All decryption methods failed: backend service, Supabase RPC, and local encryption."
     if not BACKEND_API_BASE or not ENCRYPTION_SERVICE_KEY:
-        error_detail += "Backend encryption service not configured (TRAINFLOW_BACKEND_URL or TRAINFLOW_SERVICE_KEY missing). "
-    error_detail += "Please ensure the backend encryption service is running and accessible, or that Supabase RPC 'decrypt_password' is available."
+        error_detail += " Backend encryption service not configured (TRAINFLOW_BACKEND_URL or TRAINFLOW_SERVICE_KEY missing)."
+    if not local_encryption_available():
+        error_detail += " Local encryption not available (MT5_ENCRYPTION_KEY not set)."
     
     raise HTTPException(status_code=500, detail=error_detail)
 
